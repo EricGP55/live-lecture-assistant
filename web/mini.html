@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Clase · mini</title>
+<style>
+  :root { --bg:#0b0d11; --line:#1f242d; --text:#d9dce2; --muted:#7b8394; --prof:#5b9dff; --alum:#f0a04b; }
+  body { margin:0; background:var(--bg); color:var(--text); font:13px/1.45 -apple-system, sans-serif; }
+  .top { display:flex; align-items:center; gap:8px; padding:8px 12px; border-bottom:1px solid var(--line); color:var(--muted); font-size:12px; }
+  .rec { width:7px; height:7px; border-radius:50%; background:#444; }
+  .rec.on { background:#ef4444; }
+  #avisos { padding:10px 12px; border-bottom:1px solid var(--line); color:var(--muted); font-size:12px; }
+  #lista { padding:6px 12px 60px; }
+  .f { padding:5px 0; border-bottom:1px solid var(--line); }
+  .f b { font-size:10px; margin-right:6px; }
+  .P b { color:var(--prof); } .A b { color:var(--alum); } .X b { color:var(--muted); }
+  .parcial { color:var(--muted); font-style:italic; }
+  .caja { position:fixed; bottom:0; left:0; right:0; padding:8px 12px; border-top:1px solid var(--line); background:var(--bg); }
+  .caja input { width:100%; box-sizing:border-box; background:#151920; border:1px solid var(--line); color:var(--muted);
+                border-radius:6px; padding:7px 9px; font:inherit; }
+</style>
+</head>
+<body>
+<div class="top"><span class="rec" id="rec"></span><span id="asig">Clase</span></div>
+<div id="avisos">Avisos: llegarán en la fase 4.</div>
+<div id="lista"></div>
+<div class="caja"><input disabled placeholder="Preguntar a la IA (fase 2)…"></div>
+<script>
+const $ = id => document.getElementById(id);
+const cls = h => h === 'P' ? 'P' : h === 'A' ? 'A' : 'X';
+const ultimas = new Map(); let parcial = '';
+function pintar() {
+  const items = [...ultimas.values()].slice(-6);
+  $('lista').innerHTML = items.map(f => `<div class="f ${cls(f.hablante)}"><b>${f.hablante||'?'}</b>${f.texto.replace(/</g,'&lt;')}</div>`).join('')
+    + (parcial ? `<div class="f parcial">${parcial.replace(/</g,'&lt;')}</div>` : '');
+}
+function conectar() {
+  const ws = new WebSocket(`ws://${location.host}/ws`);
+  ws.onmessage = e => {
+    const ev = JSON.parse(e.data);
+    if (ev.tipo === 'frase') { ultimas.set(ev.id, ev); if (ultimas.size > 20) ultimas.delete(ultimas.keys().next().value); pintar(); }
+    else if (ev.tipo === 'hablante' && ultimas.has(ev.id)) { ultimas.get(ev.id).hablante = ev.hablante; pintar(); }
+    else if (ev.tipo === 'parcial') { parcial = ev.texto || ''; pintar(); }
+    else if (ev.tipo === 'clase') $('asig').textContent = ev.asignatura;
+    else if (ev.tipo === 'estado') $('rec').classList.toggle('on', ev.texto.startsWith('Escuchando'));
+  };
+  ws.onclose = () => setTimeout(conectar, 1500);
+}
+conectar();
+</script>
+</body>
+</html>

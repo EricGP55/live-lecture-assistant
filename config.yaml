@@ -1,0 +1,27 @@
+# Configuración del asistente de clase.
+idioma: es              # informativo; Parakeet v3 detecta el idioma solo (es, en y ~25 europeos)
+
+audio:
+  dispositivo: null     # null = micro por defecto. Nombre (o parte) o índice: ver `python clase.py --dispositivos`
+  guardar: true         # guarda el audio comprimido (Opus) para reescuchar
+  bitrate: 24k          # ~11 MB por hora
+
+stt:
+  modelo: mlx-community/parakeet-tdt-0.6b-v3
+  parcial_cada_s: 1.5   # cada cuánto se actualiza el texto provisional mientras alguien habla
+
+vad:
+  silencio_min_s: 0.5   # pausa que cierra una frase
+  voz_min_s: 0.25
+  frase_max_s: 15       # corta frases muy largas (memoria y latencia)
+
+voces:
+  umbral_mismo_hablante: 0.70   # similitud coseno para considerar la misma voz
+  umbral_profe_guardado: 0.65   # similitud con la huella guardada del profesor
+  voz_min_para_decidir_s: 20    # segundos de voz antes de fijar quién es el profesor (si no hay huella)
+
+servidor:
+  host: 127.0.0.1       # solo accesible desde este Mac
+  puerto: 8765
+
+datos: datos            # carpeta con clase.db, audio/ y apuntes/
