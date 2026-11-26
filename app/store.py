@@ -55,7 +55,28 @@ CREATE TABLE IF NOT EXISTS questions (
     tokens_in INTEGER,
     tokens_out INTEGER
 );
+CREATE TABLE IF NOT EXISTS doubts (
+    id INTEGER PRIMARY KEY,
+    subject_id INTEGER NOT NULL REFERENCES subjects(id),
+    class_id INTEGER REFERENCES classes(id),       -- class where it was written
+    created_at REAL NOT NULL,
+    t_class REAL,
+    text TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',        -- pending | partial | answered | dismissed
+    answer TEXT DEFAULT '',
+    evidence TEXT DEFAULT '[]',                    -- JSON list of "mm:ss"
+    missing TEXT DEFAULT '',
+    questions TEXT DEFAULT '[]',                   -- JSON list of suggested questions
+    answered_class_id INTEGER,
+    answered_t REAL,
+    embedding BLOB,
+    tokens INTEGER DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS doubts_subject ON doubts(subject_id, status);
 """
+
+DOUBT_FIELDS = ("status", "answer", "evidence", "missing", "questions", "answered_class_id",
+                "answered_t", "embedding", "tokens")
 
 SCOPE_SQL = {
     "class": "s.class_id = :class_id",
@@ -164,6 +185,45 @@ class Store:
     def questions(self, class_id: int) -> list[dict]:
         return self._query("SELECT id, question, answer, scope FROM questions WHERE class_id=? ORDER BY id",
                            (class_id,))
+
+    # --- concerns profile and question style (per subject)
+    def set_profile(self, subject_id: int, concerns: str, style: dict):
+        import json
+        self._exec("UPDATE subjects SET concerns_profile=?, question_style=? WHERE id=?",
+                   (concerns, json.dumps(style), subject_id))
+
+    def profile(self, subject_id: int) -> dict:
+        import json
+        r = self._query("SELECT concerns_profile, question_style FROM subjects WHERE id=?", (subject_id,))[0]
+        return {"concerns": r["concerns_profile"] or "", "style": json.loads(r["question_style"] or "{}")}
+
+    # --- doubts
+    def new_doubt(self, subject_id, class_id, t_class, text, embedding) -> int:
+        return self._exec(
+            "INSERT INTO doubts(subject_id,class_id,created_at,t_class,text,embedding) VALUES (?,?,?,?,?,?)",
+            (subject_id, class_id, time.time(), t_class, text,
+             embedding.astype(np.float32).tobytes())).lastrowid
+
+    def update_doubt(self, doubt_id: int, **fields):
+        cols = [k for k in fields if k in DOUBT_FIELDS]
+        if cols:
+            self._exec(f"UPDATE doubts SET {', '.join(c + '=?' for c in cols)} WHERE id=?",
+                       (*[fields[c] for c in cols], doubt_id))
+
+    def doubt(self, doubt_id: int) -> dict | None:
+        r = self._query("SELECT * FROM doubts WHERE id=?", (doubt_id,))
+        return r[0] if r else None
+
+    def open_doubts(self, subject_id: int, class_id: int) -> list[dict]:
+        """Doubts of this class, plus unresolved ones from earlier classes of the subject."""
+        return self._query(
+            "SELECT * FROM doubts WHERE subject_id=? AND (class_id=? OR status IN ('pending','partial')) "
+            "ORDER BY id", (subject_id, class_id))
+
+    def sentences_between(self, class_id: int, t0: float, t1: float) -> list[dict]:
+        return self._query("SELECT id,t_start,speaker,text FROM sentences "
+                           "WHERE class_id=? AND t_start>=? AND t_start<=? ORDER BY t_start",
+                           (class_id, t0, t1))
 
     def sentences(self, class_id: int) -> list[dict]:
         return self._query("SELECT id,t_start,t_end,text,speaker,p_teacher FROM sentences "

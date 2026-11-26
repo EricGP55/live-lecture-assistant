@@ -86,6 +86,8 @@ class Pipeline(threading.Thread):
         last_level = 0.0
         partial_every = cfg["stt"]["partial_every_s"]
         last_end = [0]            # end (in samples) of the last sentence
+        pause_after = int(cfg.get("doubts", {}).get("pause_moment_s", 4) * SR)
+        pause_sent = [True]       # one "pause" event per silence
 
         def audio_before(sample, length):
             """Ring audio right before `sample` (pre-roll, recovers word onsets)."""
@@ -101,6 +103,7 @@ class Pipeline(threading.Thread):
             seg_start -= len(pre)
             samples = np.concatenate([pre, samples])
             last_end[0] = seg_start + len(samples)
+            pause_sent[0] = False
             text = stt.transcribe(samples)
             if not text:
                 return
@@ -143,6 +146,11 @@ class Pipeline(threading.Thread):
                 vad.pop()
                 speech_from = max(0, n - int(0.4 * SR)) if vad.is_speech_detected() else None
                 self.emit({"type": "partial", "text": ""})
+
+            # long silence after someone spoke: a possible moment to ask (used by the doubts mode)
+            if not speaking and not pause_sent[0] and n - last_end[0] >= pause_after:
+                pause_sent[0] = True
+                self.emit({"type": "pause", "after_s": (n - last_end[0]) / SR, "t": n / SR})
 
             now = time.monotonic()
             if now - last_level > 0.25:

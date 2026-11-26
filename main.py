@@ -15,7 +15,9 @@ import uvicorn
 
 from app.audio import list_devices
 from app.config import load
+from app.doubts import Doubts
 from app.embeddings import Embedder
+from app.llm import SubscriptionLLM
 from app.pipeline import Pipeline
 from app.qa import QA
 from app.search import Retriever
@@ -46,11 +48,19 @@ def main():
     store = Store(cfg["data"] / "class.db")
     hub = Hub()
     embedder = Embedder()
+
+    def services(send_all):
+        llm_cfg = cfg.get("llm", {})
+        llm = SubscriptionLLM(model=llm_cfg.get("answer_model", "sonnet"), effort=llm_cfg.get("effort", "low"))
+        retriever = Retriever(store, embedder)
+        return {"llm": llm, "qa": QA(cfg, retriever, llm),
+                "doubts": Doubts(cfg, store, retriever, embedder, llm, send_all)}
+
     app = create_app(
         hub,
         lambda: Pipeline(cfg, store, a.subject, hub.emit, audio_file=a.file, fast=a.fast,
                          embedder=embedder),
-        lambda: QA(cfg, Retriever(store, embedder)))
+        services)
     host, port = cfg["server"]["host"], cfg["server"]["port"]
     url = f"http://{host}:{port}/"
     print(f"Opening {url}  (mini: {url}mini) · Ctrl+C to end the class")

@@ -16,6 +16,8 @@ line "$TEACHER" "Buena pregunta. Sí, entra todo lo de hoy. Fijaos bien en la re
 line "$TEACHER" "Por ejemplo, la derivada de e elevado a x es e elevado a x. Es la única función que es igual a su propia derivada."
 line "$STUDENT" "No lo entiendo, ¿por qué pasa eso con la e?"
 line "$TEACHER" "Lo vemos con la definición de límite. Para el jueves, haced los ejercicios del tema tres, del uno al diez."
+line "$TEACHER" "Vamos a verlo. Con la definición, el cociente incremental de e elevado a x es e elevado a x por, e elevado a h menos uno, partido por h. Ese límite vale uno cuando h tiende a cero, y por eso la derivada de e elevado a x es e elevado a x."
+line "$TEACHER" "¿Alguna pregunta?"
 for f in "$TMP"/*.aiff; do ffmpeg -loglevel error -y -i "$f" -ar 16000 -ac 1 "${f%.aiff}.wav"; done
 ffmpeg -loglevel error -y -f lavfi -t 0.8 -i anullsrc=r=16000:cl=mono "$TMP/silence.wav"
 : > "$TMP/list.txt"

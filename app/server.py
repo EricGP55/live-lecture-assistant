@@ -1,7 +1,7 @@
 """Local web server: full page (/), mini window (/mini) and event WebSocket (/ws).
 
-The WebSocket carries live class events to every client, and answers to questions
-only to the client that asked.
+The WebSocket carries live class events and doubt updates to every client; answers to
+questions and suggestions go only to the client that asked.
 """
 import asyncio
 import json
@@ -24,6 +24,7 @@ class Hub:
         self.loop: asyncio.AbstractEventLoop | None = None
         self.q: asyncio.Queue | None = None
         self.latest: dict[str, dict] = {}  # last status/class event, replayed to new clients
+        self.listeners = []                # async fn(event) called for every pipeline event
 
     def emit(self, ev: dict):
         """Thread-safe: called from the pipeline thread."""
@@ -42,32 +43,51 @@ class Hub:
         except Exception:
             self.clients.pop(ws, None)
 
-    async def broadcast(self):
+    async def send_all(self, ev: dict):
+        for ws in list(self.clients):
+            await self.send(ws, ev)
+
+    async def run(self):
         while True:
             ev = await self.q.get()
-            for ws in list(self.clients):
-                await self.send(ws, ev)
+            await self.send_all(ev)
+            for fn in self.listeners:
+                asyncio.create_task(fn(ev))
 
 
-def create_app(hub: Hub, pipeline_factory, qa_factory=None):
-    state = {"pipeline": None, "qa": None}
+def create_app(hub: Hub, pipeline_factory, services_factory=None):
+    """services_factory(send_all) -> {"llm": ..., "qa": ..., "doubts": ...}"""
+    state = {"pipeline": None, "svc": {}}
+
+    async def on_event(ev):
+        p, doubts = state["pipeline"], state["svc"].get("doubts")
+        if not doubts or not p or p.class_id is None:
+            return
+        try:
+            if ev["type"] == "sentence":
+                await doubts.on_sentence(ev, p)
+            elif ev["type"] == "pause":
+                await doubts.on_pause(ev, p)
+        except Exception as e:  # watching doubts must never break the class
+            print("doubts watcher error:", e)
 
     @asynccontextmanager
     async def lifespan(app):
         hub.loop = asyncio.get_running_loop()
         hub.q = asyncio.Queue()
-        task = asyncio.create_task(hub.broadcast())
+        task = asyncio.create_task(hub.run())
         p = pipeline_factory()
         state["pipeline"] = p
         p.start()
-        if qa_factory:
-            state["qa"] = qa_factory()
-            state["qa"].llm.warm_up()  # open the first Claude session in the background
+        if services_factory:
+            state["svc"] = services_factory(hub.send_all)
+            state["svc"]["llm"].warm_up()  # open the first Claude session in the background
+            hub.listeners.append(on_event)
         yield
         p.stop()
         await asyncio.to_thread(p.join, 30)
-        if state["qa"]:
-            await state["qa"].llm.close()
+        if "llm" in state["svc"]:
+            await state["svc"]["llm"].close()
         task.cancel()
 
     app = FastAPI(lifespan=lifespan)
@@ -85,16 +105,50 @@ def create_app(hub: Hub, pipeline_factory, qa_factory=None):
         state["pipeline"].stop()
         return {"ok": True}
 
+    def ready():
+        p = state["pipeline"]
+        return state["svc"] and p is not None and p.class_id is not None
+
     async def answer(sock, question, scope):
-        qa, p = state["qa"], state["pipeline"]
-        if qa is None or p is None or p.class_id is None:
+        if not ready():
             await hub.send(sock, {"type": "answer_start", "scope": scope, "sources": 0})
             await hub.send(sock, {"type": "answer_done", "error": "The class has not started yet."})
             return
         try:
-            await qa.ask(question, scope, p, lambda ev: hub.send(sock, ev))
+            await state["svc"]["qa"].ask(question, scope, state["pipeline"], lambda ev: hub.send(sock, ev))
         except Exception as e:  # never leave the page waiting
             await hub.send(sock, {"type": "answer_done", "error": str(e)})
+
+    async def handle(sock, msg):
+        kind = msg.get("type")
+        p = state["pipeline"]
+        if kind == "ask" and msg.get("question", "").strip():
+            scope = msg.get("scope") if msg.get("scope") in SCOPES else "class"
+            await answer(sock, msg["question"].strip()[:500], scope)
+            return
+        if not ready():
+            await hub.send(sock, {"type": "error", "text": "The class has not started yet."})
+            return
+        doubts = state["svc"]["doubts"]
+        if kind == "doubt_add" and msg.get("text", "").strip():
+            await doubts.add(msg["text"].strip()[:400], p)
+        elif kind == "doubt_recheck":
+            await doubts.check(int(msg["id"]), p)
+        elif kind == "doubt_dismiss":
+            await doubts.dismiss(int(msg["id"]), p)
+        elif kind == "suggest":
+            qs, err = await doubts.suggest(p)
+            await hub.send(sock, {"type": "suggestions", "questions": qs, "error": err})
+        elif kind == "profile_set":
+            style = {"address": msg.get("address", "informal"), "length": msg.get("length", "short")}
+            await asyncio.to_thread(p.store.set_profile, p.subject["id"], msg.get("concerns", "")[:1500], style)
+            await hub.send_all({"type": "profile", **await asyncio.to_thread(p.store.profile, p.subject["id"])})
+
+    async def safe_handle(sock, msg):
+        try:
+            await handle(sock, msg)
+        except Exception as e:
+            await hub.send(sock, {"type": "error", "text": str(e)})
 
     @app.websocket("/ws")
     async def ws(sock: WebSocket):
@@ -112,12 +166,14 @@ def create_app(hub: Hub, pipeline_factory, qa_factory=None):
             for q in p.store.questions(p.class_id):
                 await hub.send(sock, {"type": "past_answer", "question": q["question"],
                                       "answer": q["answer"] or "", "scope": q["scope"]})
+            if state["svc"]:
+                for d in await asyncio.to_thread(state["svc"]["doubts"].views, p):
+                    await hub.send(sock, {"type": "doubt", **d})
+            await hub.send(sock, {"type": "profile", **p.store.profile(p.subject["id"])})
         try:
             while True:
                 msg = json.loads(await sock.receive_text())
-                if msg.get("type") == "ask" and msg.get("question", "").strip():
-                    scope = msg.get("scope") if msg.get("scope") in SCOPES else "class"
-                    asyncio.create_task(answer(sock, msg["question"].strip()[:500], scope))
+                asyncio.create_task(safe_handle(sock, msg))
         except (WebSocketDisconnect, json.JSONDecodeError):
             pass
         finally:

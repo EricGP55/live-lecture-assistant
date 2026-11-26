@@ -26,6 +26,16 @@ llm:
   effort: low           # low keeps answers quick and cheap
   context_chars: 5000   # max transcript characters sent per question (~1,300 tokens)
 
+doubts:
+  match_floor: 0.85        # never ask Claude to confirm below this similarity (e5) between a doubt and a sentence
+  match_strong: 0.88       # a sentence this similar is clearly about the doubt: confirm right away
+  match_z: 2.0             # or a sentence this many std devs above that doubt's usual similarity
+  confirm_cooldown_s: 30   # min time between confirmations of the same doubt (skipped for strong matches)
+  pause_moment_s: 4        # silence after the teacher that counts as a "good moment to ask"
+
+notifications:
+  enabled: true            # silent macOS banners (doubt answered, good moment to ask)
+
 server:
   host: 127.0.0.1       # only reachable from this Mac
   port: 8765

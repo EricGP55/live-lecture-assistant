@@ -5,9 +5,30 @@
 - Opening a session takes ~5 s, so one is kept connected and waiting ("warm spare");
   after each question the next spare is prepared in the background.
 - No tools, no settings files, no account connectors, a short custom system prompt.
+- One shared instance for every task (each waiting session costs ~150 MB of RAM), so the
+  system prompt is generic and each task puts its instructions at the top of the message.
 """
+
+GENERIC_SYSTEM_PROMPT = (
+    "You are the assistant inside a live-class app used by a student. "
+    "Each message starts with the task instructions; follow them exactly. "
+    "Be concise. When asked for JSON, reply with the JSON object only."
+)
+
+
+def parse_json(text: str) -> dict | None:
+    """Extracts the first JSON object from a model reply (tolerates code fences and stray text)."""
+    m = re.search(r"\{.*\}", text, re.S)
+    if not m:
+        return None
+    try:
+        return json.loads(m.group(0))
+    except json.JSONDecodeError:
+        return None
 import asyncio
+import json
 import os
+import re
 import tempfile
 from dataclasses import dataclass, field
 
@@ -26,7 +47,8 @@ class Answer:
 
 
 class SubscriptionLLM:
-    def __init__(self, system_prompt: str, model: str = "sonnet", effort: str | None = "low"):
+    def __init__(self, system_prompt: str = GENERIC_SYSTEM_PROMPT, model: str = "sonnet",
+                 effort: str | None = "low"):
         # Force the subscription login even if an API key is set in the environment.
         os.environ.pop("ANTHROPIC_API_KEY", None)
         self.options = ClaudeAgentOptions(
@@ -99,6 +121,12 @@ class SubscriptionLLM:
             finally:
                 asyncio.create_task(self._close(client))
             return ans
+
+    async def complete(self, prompt: str) -> Answer:
+        """Same as stream(), without incremental output."""
+        async def ignore(_):
+            pass
+        return await self.stream(prompt, ignore)
 
     @staticmethod
     async def _close(client):

@@ -13,6 +13,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from app.config import load  # noqa: E402
 from app.embeddings import Embedder  # noqa: E402
+from app.llm import SubscriptionLLM  # noqa: E402
 from app.pipeline import Pipeline  # noqa: E402
 from app.qa import QA  # noqa: E402
 from app.search import Retriever  # noqa: E402
@@ -40,7 +41,8 @@ print(f"Transcribed {len(store.sentences(p.class_id))} sentences. Model: {cfg['l
 
 
 async def main():
-    qa = QA(cfg, Retriever(store, embedder))
+    llm = SubscriptionLLM(model=cfg["llm"]["answer_model"], effort=cfg["llm"]["effort"])
+    qa = QA(cfg, Retriever(store, embedder), llm)
     qa.llm.warm_up()
     await asyncio.sleep(6)  # let the warm spare connect, as it would while the class runs
     for q in QUESTIONS:

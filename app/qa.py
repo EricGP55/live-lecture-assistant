@@ -4,7 +4,7 @@ import asyncio
 from .llm import SubscriptionLLM
 from .search import Retriever, fmt_t
 
-SYSTEM_PROMPT = """You help a student during a live class. You get excerpts of the automatic transcript and a question.
+INSTRUCTIONS = """Task: answer the student's question about the class. You get excerpts of the automatic transcript.
 Transcript lines look like "[mm:ss T] text": T = teacher, S = student, ? = unknown speaker.
 Rules:
 - Answer in the language of the question. Be brief: at most 80 words unless the student asks for more.
@@ -15,12 +15,10 @@ Rules:
 
 
 class QA:
-    def __init__(self, cfg: dict, retriever: Retriever):
-        llm_cfg = cfg.get("llm", {})
+    def __init__(self, cfg: dict, retriever: Retriever, llm: SubscriptionLLM):
         self.retriever = retriever
-        self.llm = SubscriptionLLM(SYSTEM_PROMPT, model=llm_cfg.get("answer_model", "sonnet"),
-                                   effort=llm_cfg.get("effort", "low"))
-        self.max_chars = llm_cfg.get("context_chars", 5000)
+        self.llm = llm
+        self.max_chars = cfg.get("llm", {}).get("context_chars", 5000)
 
     async def ask(self, question: str, scope: str, pipeline, send):
         """send(event) delivers events to the asking client only."""
@@ -35,7 +33,7 @@ class QA:
             await send({"type": "answer_delta", "text": text})
             await send({"type": "answer_done", "error": None, "tokens_in": 0, "tokens_out": 0})
             return
-        prompt = f"Transcript excerpts (now = {fmt_t(now)}):\n{context}\n\nQuestion: {question}"
+        prompt = f"{INSTRUCTIONS}\n\nTranscript excerpts (now = {fmt_t(now)}):\n{context}\n\nQuestion: {question}"
 
         async def on_delta(t):
             await send({"type": "answer_delta", "text": t})
