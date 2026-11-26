@@ -1,8 +1,8 @@
-"""Transcripción con Parakeet v3 (MLX), en modo frase completa.
+"""Speech-to-text with Parakeet v3 (MLX), one full sentence at a time.
 
-El modo streaming de parakeet-mlx resultó lento (RTF > 1) e impreciso en un M1 8 GB,
-así que se transcribe cada frase cortada por el VAD (RTF ~0,05) y se dan parciales
-re-transcribiendo la frase en curso cada pocos segundos.
+parakeet-mlx's streaming mode was slow (RTF > 1) and inaccurate on an 8 GB M1, so each
+sentence cut by the VAD is transcribed as a whole (RTF ~0.05), and partial results come
+from re-transcribing the sentence in progress every few seconds.
 """
 import warnings
 
@@ -12,21 +12,21 @@ import numpy as np
 warnings.filterwarnings("ignore")
 
 
-class Transcriptor:
-    def __init__(self, modelo: str):
+class Transcriber:
+    def __init__(self, model: str):
         from parakeet_mlx import from_pretrained
         from parakeet_mlx.audio import get_logmel
-        self._mel = get_logmel
-        self.m = from_pretrained(modelo)
-        self.transcribir(np.zeros(16000, dtype=np.float32))  # calentar Metal
+        self._logmel = get_logmel
+        self.model = from_pretrained(model)
+        self.transcribe(np.zeros(16000, dtype=np.float32))  # warm up Metal
 
-    def transcribir(self, audio: np.ndarray) -> str:
-        if len(audio) < 1600:  # < 0,1 s
+    def transcribe(self, audio: np.ndarray) -> str:
+        if len(audio) < 1600:  # < 0.1 s
             return ""
-        # Sin un poco de silencio delante, Parakeet tiende a perder la primera palabra.
+        # Without a little leading silence, Parakeet tends to drop the first word.
         pad = np.zeros(int(0.3 * 16000), dtype=np.float32)
         audio = np.concatenate([pad, audio.astype(np.float32), pad[:3200]])
-        mel = self._mel(mx.array(audio), self.m.preprocessor_config)
-        r = self.m.generate(mel)[0]
+        mel = self._logmel(mx.array(audio), self.model.preprocessor_config)
+        result = self.model.generate(mel)[0]
         mx.clear_cache()
-        return r.text.strip()
+        return result.text.strip()

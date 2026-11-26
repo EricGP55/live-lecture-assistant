@@ -1,27 +1,27 @@
-# Configuración del asistente de clase.
-idioma: es              # informativo; Parakeet v3 detecta el idioma solo (es, en y ~25 europeos)
+# Live class assistant configuration.
+language: es            # informative; Parakeet v3 auto-detects the language (es, en and ~25 European languages)
 
 audio:
-  dispositivo: null     # null = micro por defecto. Nombre (o parte) o índice: ver `python clase.py --dispositivos`
-  guardar: true         # guarda el audio comprimido (Opus) para reescuchar
-  bitrate: 24k          # ~11 MB por hora
+  device: null          # null = default mic. Name (or part of it) or index: see `python main.py --devices`
+  save: true            # keep compressed audio (Opus) to listen again later
+  bitrate: 24k          # ~11 MB per hour
 
 stt:
-  modelo: mlx-community/parakeet-tdt-0.6b-v3
-  parcial_cada_s: 1.5   # cada cuánto se actualiza el texto provisional mientras alguien habla
+  model: mlx-community/parakeet-tdt-0.6b-v3
+  partial_every_s: 1.5  # how often the provisional text is refreshed while someone is speaking
 
 vad:
-  silencio_min_s: 0.5   # pausa que cierra una frase
-  voz_min_s: 0.25
-  frase_max_s: 15       # corta frases muy largas (memoria y latencia)
+  min_silence_s: 0.5    # pause that closes a sentence
+  min_speech_s: 0.25
+  max_sentence_s: 15    # split very long sentences (memory and latency)
 
-voces:
-  umbral_mismo_hablante: 0.70   # similitud coseno para considerar la misma voz
-  umbral_profe_guardado: 0.65   # similitud con la huella guardada del profesor
-  voz_min_para_decidir_s: 20    # segundos de voz antes de fijar quién es el profesor (si no hay huella)
+speakers:
+  same_speaker_threshold: 0.70   # cosine similarity to treat two segments as the same voice
+  saved_teacher_threshold: 0.65  # similarity with the subject's saved teacher voiceprint
+  min_speech_to_decide_s: 20     # seconds of speech before fixing who the teacher is (when no voiceprint exists)
 
-servidor:
-  host: 127.0.0.1       # solo accesible desde este Mac
-  puerto: 8765
+server:
+  host: 127.0.0.1       # only reachable from this Mac
+  port: 8765
 
-datos: datos            # carpeta con clase.db, audio/ y apuntes/
+data: data              # folder with class.db, audio/ and notes/

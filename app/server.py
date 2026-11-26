@@ -1,4 +1,4 @@
-"""Servidor web local: página completa (/), ventana mini (/mini) y WebSocket de eventos (/ws)."""
+"""Local web server: full page (/), mini window (/mini) and event WebSocket (/ws)."""
 import asyncio
 import json
 from contextlib import asynccontextmanager
@@ -6,54 +6,54 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 
-from .config import RAIZ
+from .config import ROOT
 
-WEB = RAIZ / "web"
+WEB = ROOT / "web"
 
 
 class Hub:
-    """Puente hilo del pipeline -> clientes WebSocket."""
+    """Bridge from the pipeline thread to the WebSocket clients."""
 
     def __init__(self):
-        self.clientes: set[WebSocket] = set()
+        self.clients: set[WebSocket] = set()
         self.loop: asyncio.AbstractEventLoop | None = None
         self.q: asyncio.Queue | None = None
-        self.ultimo: dict[str, dict] = {}  # último evento de tipo estado/clase para nuevos clientes
+        self.latest: dict[str, dict] = {}  # last status/class event, replayed to new clients
 
-    def emitir(self, ev: dict):
-        if ev["tipo"] in ("estado", "clase"):
-            self.ultimo[ev["tipo"]] = ev
+    def emit(self, ev: dict):
+        if ev["type"] in ("status", "class"):
+            self.latest[ev["type"]] = ev
         if self.loop and self.q:
             self.loop.call_soon_threadsafe(self.q.put_nowait, ev)
 
-    async def difundir(self):
+    async def broadcast(self):
         while True:
             ev = await self.q.get()
             msg = json.dumps(ev, ensure_ascii=False)
-            for ws in list(self.clientes):
+            for ws in list(self.clients):
                 try:
                     await ws.send_text(msg)
                 except Exception:
-                    self.clientes.discard(ws)
+                    self.clients.discard(ws)
 
 
-def crear_app(hub: Hub, pipeline_factory):
-    estado = {"pipeline": None}
+def create_app(hub: Hub, pipeline_factory):
+    state = {"pipeline": None}
 
     @asynccontextmanager
-    async def vida(app):
+    async def lifespan(app):
         hub.loop = asyncio.get_running_loop()
         hub.q = asyncio.Queue()
-        tarea = asyncio.create_task(hub.difundir())
+        task = asyncio.create_task(hub.broadcast())
         p = pipeline_factory()
-        estado["pipeline"] = p
+        state["pipeline"] = p
         p.start()
         yield
-        p.parar()
+        p.stop()
         await asyncio.to_thread(p.join, 30)
-        tarea.cancel()
+        task.cancel()
 
-    app = FastAPI(lifespan=vida)
+    app = FastAPI(lifespan=lifespan)
 
     @app.get("/")
     async def index():
@@ -63,29 +63,29 @@ def crear_app(hub: Hub, pipeline_factory):
     async def mini():
         return FileResponse(WEB / "mini.html")
 
-    @app.post("/api/parar")
-    async def parar():
-        estado["pipeline"].parar()
+    @app.post("/api/stop")
+    async def stop():
+        state["pipeline"].stop()
         return {"ok": True}
 
     @app.websocket("/ws")
     async def ws(sock: WebSocket):
         await sock.accept()
-        p = estado["pipeline"]
-        for tipo in ("clase", "estado"):
-            if tipo in hub.ultimo:
-                await sock.send_text(json.dumps(hub.ultimo[tipo], ensure_ascii=False))
-        if p and p.clase_id:
-            for f in p.store.frases(p.clase_id):
+        p = state["pipeline"]
+        for kind in ("class", "status"):
+            if kind in hub.latest:
+                await sock.send_text(json.dumps(hub.latest[kind], ensure_ascii=False))
+        if p and p.class_id:
+            for s in p.store.sentences(p.class_id):
                 await sock.send_text(json.dumps({
-                    "tipo": "frase", "id": f["id"], "t0": f["t_inicio"], "t1": f["t_fin"],
-                    "texto": f["texto"], "hablante": f["hablante"], "p": f["p_profe"]},
+                    "type": "sentence", "id": s["id"], "t0": s["t_start"], "t1": s["t_end"],
+                    "text": s["text"], "speaker": s["speaker"], "p": s["p_teacher"]},
                     ensure_ascii=False))
-        hub.clientes.add(sock)
+        hub.clients.add(sock)
         try:
             while True:
                 await sock.receive_text()
         except WebSocketDisconnect:
-            hub.clientes.discard(sock)
+            hub.clients.discard(sock)
 
     return app

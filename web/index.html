@@ -1,13 +1,13 @@
 <!doctype html>
-<html lang="es">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Clase en vivo</title>
+<title>Live class</title>
 <style>
   :root {
     --bg: #0f1115; --panel: #171a21; --line: #262b35; --text: #e6e8ec; --muted: #8b93a3;
-    --prof: #5b9dff; --alum: #f0a04b; --unk: #6b7280; --ok: #3ecf8e; --warn: #f5c542;
+    --teacher: #5b9dff; --student: #f0a04b; --unk: #6b7280; --ok: #3ecf8e; --warn: #f5c542;
   }
   * { box-sizing: border-box; }
   [hidden] { display: none !important; }
@@ -16,30 +16,30 @@
   header { position: sticky; top: 0; z-index: 2; display: flex; gap: 16px; align-items: center;
            padding: 12px 20px; background: var(--panel); border-bottom: 1px solid var(--line); }
   h1 { font-size: 16px; margin: 0; font-weight: 600; }
-  .estado { color: var(--muted); font-size: 13px; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .status { color: var(--muted); font-size: 13px; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .rec { width: 9px; height: 9px; border-radius: 50%; background: var(--unk); flex: none; }
   .rec.on { background: #ef4444; animation: pulso 1.4s infinite; }
   @keyframes pulso { 50% { opacity: .35; } }
-  .nivel { width: 80px; height: 6px; background: var(--line); border-radius: 3px; overflow: hidden; flex: none; }
-  .nivel > i { display: block; height: 100%; width: 0; background: var(--ok); transition: width .2s; }
-  .reloj { font-variant-numeric: tabular-nums; color: var(--muted); font-size: 13px; }
+  .level { width: 80px; height: 6px; background: var(--line); border-radius: 3px; overflow: hidden; flex: none; }
+  .level > i { display: block; height: 100%; width: 0; background: var(--ok); transition: width .2s; }
+  .clock { font-variant-numeric: tabular-nums; color: var(--muted); font-size: 13px; }
   button { background: #2a303c; color: var(--text); border: 1px solid var(--line); border-radius: 6px;
            padding: 6px 12px; font: inherit; font-size: 13px; cursor: pointer; }
   button:hover { background: #343b49; }
-  button.parar { border-color: #7f1d1d; }
+  button.stop { border-color: #7f1d1d; }
   main { max-width: 860px; margin: 0 auto; padding: 16px 20px 120px; }
-  .leyenda { display: flex; gap: 14px; color: var(--muted); font-size: 12px; margin-bottom: 10px; }
-  .frase { display: grid; grid-template-columns: 52px 30px 1fr; gap: 10px; padding: 8px 0;
+  .legend { display: flex; gap: 14px; color: var(--muted); font-size: 12px; margin-bottom: 10px; }
+  .row { display: grid; grid-template-columns: 52px 30px 1fr; gap: 10px; padding: 8px 0;
            border-bottom: 1px solid var(--line); }
   .t { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; padding-top: 2px; }
   .tag { font-size: 11px; font-weight: 700; border-radius: 4px; height: 20px; display: grid; place-items: center; margin-top: 1px; }
-  .P .tag { background: color-mix(in srgb, var(--prof) 22%, transparent); color: var(--prof); }
-  .A .tag { background: color-mix(in srgb, var(--alum) 22%, transparent); color: var(--alum); }
+  .T .tag { background: color-mix(in srgb, var(--teacher) 22%, transparent); color: var(--teacher); }
+  .S .tag { background: color-mix(in srgb, var(--student) 22%, transparent); color: var(--student); }
   .X .tag { background: color-mix(in srgb, var(--unk) 25%, transparent); color: #aab1bd; }
-  .A .txt { color: #f3d7b6; }
-  .parcial .txt { color: var(--muted); font-style: italic; }
-  .parcial { border-bottom: none; }
-  .vacio { color: var(--muted); text-align: center; padding: 60px 0; }
+  .S .txt { color: #f3d7b6; }
+  .partial .txt { color: var(--muted); font-style: italic; }
+  .partial { border-bottom: none; }
+  .empty { color: var(--muted); text-align: center; padding: 60px 0; }
   .sw { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
   footer { position: fixed; bottom: 0; left: 0; right: 0; padding: 8px 20px; font-size: 12px; color: var(--muted);
            background: var(--panel); border-top: 1px solid var(--line); display: flex; gap: 18px; }
@@ -48,97 +48,97 @@
 <body>
 <header>
   <span class="rec" id="rec"></span>
-  <h1 id="asig">Clase</h1>
-  <span class="estado" id="estado">Conectando…</span>
-  <span class="reloj" id="reloj">00:00</span>
-  <span class="nivel" title="Nivel del micro"><i id="nivel"></i></span>
-  <button onclick="window.open('/mini','mini','width=380,height=520')">Ventana mini</button>
-  <button class="parar" onclick="parar()">Terminar clase</button>
+  <h1 id="subject">Class</h1>
+  <span class="status" id="status">Connecting…</span>
+  <span class="clock" id="clock">00:00</span>
+  <span class="level" title="Microphone level"><i id="level"></i></span>
+  <button onclick="window.open('/mini','mini','width=380,height=520')">Mini window</button>
+  <button class="stop" onclick="stopClass()">End class</button>
 </header>
 <main>
-  <div class="leyenda">
-    <span><i class="sw" style="background:var(--prof)"></i>P · profesor</span>
-    <span><i class="sw" style="background:var(--alum)"></i>A · alumno</span>
-    <span><i class="sw" style="background:var(--unk)"></i>? · no seguro</span>
+  <div class="legend">
+    <span><i class="sw" style="background:var(--teacher)"></i>T · teacher</span>
+    <span><i class="sw" style="background:var(--student)"></i>S · student</span>
+    <span><i class="sw" style="background:var(--unk)"></i>? · not sure</span>
   </div>
-  <div id="lista"><div class="vacio" id="vacio">Esperando a que alguien hable…</div></div>
-  <div class="frase parcial X" id="parcial" hidden><span class="t" id="pt"></span><span class="tag">…</span><span class="txt" id="ptxt"></span></div>
+  <div id="list"><div class="empty" id="empty">Waiting for someone to speak…</div></div>
+  <div class="row partial X" id="partial" hidden><span class="t" id="pt"></span><span class="tag">…</span><span class="txt" id="ptxt"></span></div>
 </main>
 <footer>
-  <span id="m-frases">0 frases</span>
-  <span id="m-proc">proceso: –</span>
-  <span id="m-retraso">retraso: –</span>
-  <span id="m-profe">profesor: detectando…</span>
+  <span id="m-count">0 sentences</span>
+  <span id="m-proc">processing: –</span>
+  <span id="m-lag">lag: –</span>
+  <span id="m-teacher">teacher: detecting…</span>
 </footer>
 <script>
 const $ = id => document.getElementById(id);
 const fmt = s => { s = Math.max(0, Math.floor(s)); const h = Math.floor(s/3600), m = Math.floor(s/60)%60, x = s%60;
   return (h ? h + ':' : '') + String(m).padStart(2,'0') + ':' + String(x).padStart(2,'0'); };
-const cls = h => h === 'P' ? 'P' : h === 'A' ? 'A' : 'X';
-let n = 0, nP = 0, inicio = null, activa = false;
+const cls = sp => sp === 'T' ? 'T' : sp === 'S' ? 'S' : 'X';
+let startedAt = null, live = false;
 
-function pintarFrase(f) {
-  $('vacio')?.remove();
+function drawSentence(f) {
+  $('empty')?.remove();
   let el = document.querySelector(`[data-id="${f.id}"]`);
   if (!el) {
     el = document.createElement('div');
     el.dataset.id = f.id;
     el.innerHTML = '<span class="t"></span><span class="tag"></span><span class="txt"></span>';
-    $('lista').appendChild(el); n++;
+    $('list').appendChild(el);
   }
-  el.className = 'frase ' + cls(f.hablante);
-  el.title = 'P(profesor) = ' + (f.p ?? '–');
+  el.className = 'row ' + cls(f.speaker);
+  el.title = 'P(teacher) = ' + (f.p ?? '–');
   el.querySelector('.t').textContent = fmt(f.t0);
-  el.querySelector('.tag').textContent = f.hablante || '?';
-  el.querySelector('.txt').textContent = f.texto;
-  contar();
+  el.querySelector('.tag').textContent = f.speaker || '?';
+  el.querySelector('.txt').textContent = f.text;
+  count();
 }
-function contar() {
-  const total = document.querySelectorAll('#lista .frase').length;
-  const p = document.querySelectorAll('#lista .frase.P').length;
-  $('m-frases').textContent = total + ' frases';
-  $('m-profe').textContent = total ? `profesor: ${Math.round(100*p/total)}% de las frases` : 'profesor: detectando…';
+function count() {
+  const total = document.querySelectorAll('#list .row').length;
+  const t = document.querySelectorAll('#list .row.T').length;
+  $('m-count').textContent = total + ' sentences';
+  $('m-teacher').textContent = total ? `teacher: ${Math.round(100*t/total)}% of sentences` : 'teacher: detecting…';
 }
-function cercaDelFinal() { return window.innerHeight + window.scrollY > document.body.scrollHeight - 160; }
-function seguir(f) { const pegado = cercaDelFinal(); f(); if (pegado) window.scrollTo(0, document.body.scrollHeight); }
+function nearBottom() { return window.innerHeight + window.scrollY > document.body.scrollHeight - 160; }
+function follow(f) { const stick = nearBottom(); f(); if (stick) window.scrollTo(0, document.body.scrollHeight); }
 
-function conectar() {
+function connect() {
   const ws = new WebSocket(`ws://${location.host}/ws`);
   ws.onmessage = e => {
     const ev = JSON.parse(e.data);
-    switch (ev.tipo) {
-      case 'estado':
-        $('estado').textContent = ev.texto;
-        activa = ev.texto.startsWith('Escuchando');
-        $('rec').classList.toggle('on', activa); break;
-      case 'clase':
-        $('asig').textContent = ev.asignatura; inicio = ev.inicio;
-        document.title = ev.asignatura + ' · en vivo';
-        if (ev.huella) $('m-profe').textContent = 'profesor: huella guardada'; break;
-      case 'frase': seguir(() => pintarFrase(ev)); if (ev.proc_ms != null) $('m-proc').textContent = `proceso: ${ev.proc_ms} ms`; break;
-      case 'hablante': {
+    switch (ev.type) {
+      case 'status':
+        $('status').textContent = ev.text;
+        live = ev.text.startsWith('Listening');
+        $('rec').classList.toggle('on', live); break;
+      case 'class':
+        $('subject').textContent = ev.subject; startedAt = ev.started_at;
+        document.title = ev.subject + ' · live';
+        if (ev.voiceprint) $('m-teacher').textContent = 'teacher: voiceprint saved'; break;
+      case 'sentence': follow(() => drawSentence(ev)); if (ev.proc_ms != null) $('m-proc').textContent = `processing: ${ev.proc_ms} ms`; break;
+      case 'speaker': {
         const el = document.querySelector(`[data-id="${ev.id}"]`);
-        if (el) { el.className = 'frase ' + cls(ev.hablante); el.querySelector('.tag').textContent = ev.hablante; el.title = 'P(profesor) = ' + ev.p; contar(); }
+        if (el) { el.className = 'row ' + cls(ev.speaker); el.querySelector('.tag').textContent = ev.speaker; el.title = 'P(teacher) = ' + ev.p; count(); }
         break; }
-      case 'parcial':
-        seguir(() => {
-          $('parcial').hidden = !ev.texto;
-          $('ptxt').textContent = ev.texto || '';
+      case 'partial':
+        follow(() => {
+          $('partial').hidden = !ev.text;
+          $('ptxt').textContent = ev.text || '';
           if (ev.t != null) $('pt').textContent = fmt(ev.t);
         }); break;
-      case 'nivel':
-        $('nivel').style.width = Math.min(100, ev.rms * 900) + '%';
-        $('m-retraso').textContent = `retraso: ${ev.retraso_s.toFixed(1)} s`; break;
+      case 'level':
+        $('level').style.width = Math.min(100, ev.rms * 900) + '%';
+        $('m-lag').textContent = `lag: ${ev.lag_s.toFixed(1)} s`; break;
     }
   };
-  ws.onclose = () => { $('estado').textContent = 'Desconectado. Reintentando…'; $('rec').classList.remove('on'); setTimeout(conectar, 1500); };
+  ws.onclose = () => { $('status').textContent = 'Disconnected. Retrying…'; $('rec').classList.remove('on'); setTimeout(connect, 1500); };
 }
-async function parar() {
-  if (!confirm('¿Terminar la clase? Se guardará todo y la huella del profesor.')) return;
-  await fetch('/api/parar', { method: 'POST' });
+async function stopClass() {
+  if (!confirm('End the class? Everything will be saved, including the teacher voiceprint.')) return;
+  await fetch('/api/stop', { method: 'POST' });
 }
-setInterval(() => { if (inicio && activa) $('reloj').textContent = fmt(Date.now()/1000 - inicio); }, 1000);
-conectar();
+setInterval(() => { if (startedAt && live) $('clock').textContent = fmt(Date.now()/1000 - startedAt); }, 1000);
+connect();
 </script>
 </body>
 </html>

@@ -1,6 +1,6 @@
-"""Bucle principal: audio -> VAD -> transcripción + voz -> base de datos -> eventos para la web.
+"""Main loop: audio -> VAD -> transcription + voice -> database -> events for the web page.
 
-Todo el trabajo con MLX y ONNX ocurre en este único hilo (MLX no es thread-safe).
+All MLX and ONNX work happens on this single thread (MLX is not thread-safe).
 """
 import threading
 import time
@@ -8,165 +8,158 @@ from datetime import datetime
 
 import numpy as np
 
-from .audio import SR, Archivo, Grabadora, Micro
-from .config import RAIZ
+from .audio import SR, AudioFile, Microphone, Recorder
+from .config import ROOT
+from .speakers import SpeakerTracker
 from .store import Store
-from .stt import Transcriptor
-from .voces import Voces
+from .stt import Transcriber
 
 
 class Pipeline(threading.Thread):
-    def __init__(self, cfg: dict, store: Store, asignatura: str, emitir, archivo=None, rapido=False):
+    def __init__(self, cfg: dict, store: Store, subject: str, emit, audio_file=None, fast=False):
         super().__init__(daemon=True)
-        self.cfg, self.store, self.emitir = cfg, store, emitir
-        self.asig = store.asignatura(asignatura)
-        self.archivo, self.rapido = archivo, rapido
-        self._parar = threading.Event()
-        self.clase_id = None
-        self.estado = "Arrancando…"
-        self.listo = threading.Event()
+        self.cfg, self.store, self.emit = cfg, store, emit
+        self.subject = store.subject(subject)
+        self.audio_file, self.fast = audio_file, fast
+        self._stop_event = threading.Event()
+        self.class_id = None
+        self.status = "Starting…"
 
-    def parar(self):
-        self._parar.set()
+    def stop(self):
+        self._stop_event.set()
 
-    def _estado(self, texto):
-        self.estado = texto
-        self.emitir({"tipo": "estado", "texto": texto})
+    def _status(self, text):
+        self.status = text
+        self.emit({"type": "status", "text": text})
 
     # ------------------------------------------------------------------
     def run(self):
         try:
             self._run()
-        except Exception as e:  # que el error se vea en la web, no solo en la terminal
-            self._estado(f"Error: {e}")
+        except Exception as e:  # show the error on the page, not only in the terminal
+            self._status(f"Error: {e}")
             raise
-        finally:
-            self.listo.set()
 
     def _run(self):
         cfg = self.cfg
-        self._estado("Cargando modelo de transcripción…")
-        stt = Transcriptor(cfg["stt"]["modelo"])
-        self._estado("Cargando modelos de voz…")
+        self._status("Loading speech-to-text model…")
+        stt = Transcriber(cfg["stt"]["model"])
+        self._status("Loading voice models…")
         import sherpa_onnx as so
         vc = so.VadModelConfig()
-        vc.silero_vad.model = str(RAIZ / "models/silero_vad.onnx")
-        vc.silero_vad.min_silence_duration = cfg["vad"]["silencio_min_s"]
-        vc.silero_vad.min_speech_duration = cfg["vad"]["voz_min_s"]
-        vc.silero_vad.max_speech_duration = cfg["vad"]["frase_max_s"]
+        vc.silero_vad.model = str(ROOT / "models/silero_vad.onnx")
+        vc.silero_vad.min_silence_duration = cfg["vad"]["min_silence_s"]
+        vc.silero_vad.min_speech_duration = cfg["vad"]["min_speech_s"]
+        vc.silero_vad.max_speech_duration = cfg["vad"]["max_sentence_s"]
         vc.sample_rate = SR
         vad = so.VoiceActivityDetector(vc, buffer_size_in_seconds=120)
-        voces = Voces(str(RAIZ / "models/speaker.onnx"), cfg["voces"],
-                      self.store.huella_profe(self.asig["id"]))
+        speakers = SpeakerTracker(str(ROOT / "models/speaker.onnx"), cfg["speakers"],
+                                  self.store.teacher_voiceprint(self.subject["id"]))
 
-        fuente = Archivo(self.archivo, tiempo_real=not self.rapido) if self.archivo \
-            else Micro(cfg["audio"]["dispositivo"])
+        source = AudioFile(self.audio_file, realtime=not self.fast) if self.audio_file \
+            else Microphone(cfg["audio"]["device"])
 
-        self.clase_id = self.store.nueva_clase(self.asig["id"], cfg.get("idioma", "es"))
-        self.inicio = time.time()
-        grab = None
-        if cfg["audio"]["guardar"]:
-            nombre = f"{self.asig['nombre']}_{datetime.now():%Y-%m-%d_%H%M}.opus".replace(" ", "_")
-            ruta = cfg["datos"] / "audio" / nombre
-            grab = Grabadora(ruta, cfg["audio"]["bitrate"])
-            self.store.set_audio(self.clase_id, str(ruta))
-        self.emitir({"tipo": "clase", "clase_id": self.clase_id, "asignatura": self.asig["nombre"],
-                     "inicio": self.inicio, "fuente": fuente.nombre,
-                     "huella": voces.huella is not None})
-        self._estado(f"Escuchando · {fuente.nombre}")
+        self.class_id = self.store.new_class(self.subject["id"], cfg.get("language", "es"))
+        self.started_at = time.time()
+        recorder = None
+        if cfg["audio"]["save"]:
+            name = f"{self.subject['name']}_{datetime.now():%Y-%m-%d_%H%M}.opus".replace(" ", "_")
+            path = cfg["data"] / "audio" / name
+            recorder = Recorder(path, cfg["audio"]["bitrate"])
+            self.store.set_audio(self.class_id, str(path))
+        self.emit({"type": "class", "class_id": self.class_id, "subject": self.subject["name"],
+                   "started_at": self.started_at, "source": source.name,
+                   "voiceprint": speakers.voiceprint is not None})
+        self._status(f"Listening · {source.name}")
 
-        # anillo con los últimos 30 s, para los parciales
-        anillo = np.zeros(SR * 30, dtype=np.float32)
-        n = 0                    # muestras totales consumidas
-        voz_desde = None         # muestra donde empezó la voz en curso
-        ult_parcial = 0.0
-        ult_nivel = 0.0
-        cada = cfg["stt"]["parcial_cada_s"]
+        ring = np.zeros(SR * 30, dtype=np.float32)  # last 30 s, for partials and pre-roll
+        n = 0                     # total samples consumed
+        speech_from = None        # sample where the current speech started
+        last_partial = 0.0
+        last_level = 0.0
+        partial_every = cfg["stt"]["partial_every_s"]
+        last_end = [0]            # end (in samples) of the last sentence
 
-        ult_fin = [0]  # fin (en muestras) de la última frase
-
-        def antes_de(muestra, largo):
-            """Audio del anillo justo antes de `muestra` (pre-roll, recupera inicios de palabra)."""
-            ini = max(0, muestra - largo, n - len(anillo))
-            if ini >= muestra:
+        def audio_before(sample, length):
+            """Ring audio right before `sample` (pre-roll, recovers word onsets)."""
+            start = max(0, sample - length, n - len(ring))
+            if start >= sample:
                 return np.zeros(0, dtype=np.float32)
-            return anillo[np.arange(ini, muestra) % len(anillo)]
+            return ring[np.arange(start, sample) % len(ring)]
 
-        def procesar_segmento(seg_start, samples):
+        def process_segment(seg_start, samples):
             t_proc = time.monotonic()
-            # el VAD detecta la voz ~0,5 s tarde: recuperamos hasta 0,7 s sin invadir la frase anterior
-            pre = antes_de(seg_start, min(int(0.7 * SR), max(0, seg_start - ult_fin[0])))
+            # the VAD fires ~0.5 s late: recover up to 0.7 s without reaching into the previous sentence
+            pre = audio_before(seg_start, min(int(0.7 * SR), max(0, seg_start - last_end[0])))
             seg_start -= len(pre)
             samples = np.concatenate([pre, samples])
-            ult_fin[0] = seg_start + len(samples)
-            texto = stt.transcribir(samples)
-            if not texto:
+            last_end[0] = seg_start + len(samples)
+            text = stt.transcribe(samples)
+            if not text:
                 return
-            g, label, p, cambios = voces.nueva_frase(-1, samples, texto)
+            cluster, label, p, changes = speakers.add_sentence(-1, samples, text)
             t0, t1 = seg_start / SR, (seg_start + len(samples)) / SR
-            fid = self.store.nueva_frase(self.clase_id, t0, t1, texto, label, p, g)
-            voces.set_id(-1, fid)
-            lat = int((time.monotonic() - t_proc) * 1000)
-            self.emitir({"tipo": "frase", "id": fid, "t0": t0, "t1": t1, "texto": texto,
-                         "hablante": label, "p": round(p, 2), "proc_ms": lat})
-            for cid, clabel, cp in cambios:
-                self.store.set_hablante(cid, clabel, cp)
-                self.emitir({"tipo": "hablante", "id": cid, "hablante": clabel, "p": round(cp, 2)})
+            sid = self.store.new_sentence(self.class_id, t0, t1, text, label, p, cluster)
+            speakers.set_id(-1, sid)
+            proc_ms = int((time.monotonic() - t_proc) * 1000)
+            self.emit({"type": "sentence", "id": sid, "t0": t0, "t1": t1, "text": text,
+                       "speaker": label, "p": round(p, 2), "proc_ms": proc_ms})
+            for cid, clabel, cp in changes:
+                self.store.set_speaker(cid, clabel, cp)
+                self.emit({"type": "speaker", "id": cid, "speaker": clabel, "p": round(cp, 2)})
 
         while True:
-            if self._parar.is_set() or (fuente.terminado and fuente.q.empty()):
+            if self._stop_event.is_set() or (source.finished and source.q.empty()):
                 break
-            x = fuente.leer(timeout=0.3)
+            x = source.read(timeout=0.3)
             if x is None:
                 continue
-            if grab:
-                grab.escribir(x)
-            # anillo
+            if recorder:
+                recorder.write(x)
             k = len(x)
-            pos = n % len(anillo)
-            fin = min(k, len(anillo) - pos)
-            anillo[pos:pos + fin] = x[:fin]
-            anillo[:k - fin] = x[fin:]
+            pos = n % len(ring)
+            first = min(k, len(ring) - pos)
+            ring[pos:pos + first] = x[:first]
+            ring[:k - first] = x[first:]
             n += k
 
             vad.accept_waveform(x)
-            hablando = vad.is_speech_detected()
-            if hablando and voz_desde is None:
-                voz_desde = max(0, n - int(0.4 * SR))
+            speaking = vad.is_speech_detected()
+            if speaking and speech_from is None:
+                speech_from = max(0, n - int(0.4 * SR))
             while not vad.empty():
                 s = vad.front
-                procesar_segmento(s.start, np.array(s.samples, dtype=np.float32))
+                process_segment(s.start, np.array(s.samples, dtype=np.float32))
                 vad.pop()
-                voz_desde = None if not vad.is_speech_detected() else max(0, n - int(0.4 * SR))
-                self.emitir({"tipo": "parcial", "texto": ""})
+                speech_from = max(0, n - int(0.4 * SR)) if vad.is_speech_detected() else None
+                self.emit({"type": "partial", "text": ""})
 
-            ahora = time.monotonic()
-            if ahora - ult_nivel > 0.25:
-                ult_nivel = ahora
-                self.emitir({"tipo": "nivel", "rms": float(np.sqrt(np.mean(x ** 2))),
-                             "t": n / SR, "retraso_s": round(fuente.pendiente_s(), 2)})
-            # parcial: re-transcribe la frase en curso si no vamos con retraso
-            if (hablando and voz_desde is not None and ahora - ult_parcial >= cada
-                    and fuente.pendiente_s() < 0.5 and n - voz_desde > SR):
-                ult_parcial = ahora
-                largo = min(n - voz_desde, len(anillo))
-                idx = (np.arange(n - largo, n)) % len(anillo)
-                texto = stt.transcribir(anillo[idx])
-                if texto:
-                    self.emitir({"tipo": "parcial", "texto": texto, "t": voz_desde / SR})
+            now = time.monotonic()
+            if now - last_level > 0.25:
+                last_level = now
+                self.emit({"type": "level", "rms": float(np.sqrt(np.mean(x ** 2))),
+                           "t": n / SR, "lag_s": round(source.backlog_s(), 2)})
+            # partial: re-transcribe the sentence in progress, unless we are lagging behind
+            if (speaking and speech_from is not None and now - last_partial >= partial_every
+                    and source.backlog_s() < 0.5 and n - speech_from > SR):
+                last_partial = now
+                length = min(n - speech_from, len(ring))
+                text = stt.transcribe(ring[np.arange(n - length, n) % len(ring)])
+                if text:
+                    self.emit({"type": "partial", "text": text, "t": speech_from / SR})
 
-        # cierre
+        # wrap up
         vad.flush()
         while not vad.empty():
             s = vad.front
-            procesar_segmento(s.start, np.array(s.samples, dtype=np.float32))
+            process_segment(s.start, np.array(s.samples, dtype=np.float32))
             vad.pop()
-        fuente.parar()
-        if grab:
-            grab.cerrar()
-        c, cn = voces.centroide_profe()
-        if c is not None:
-            self.store.guardar_huella_profe(self.asig["id"], c, cn)
-        self.store.cerrar_clase(self.clase_id)
-        self.emitir({"tipo": "parcial", "texto": ""})
-        self._estado("Clase terminada" + (" · huella del profesor guardada" if c is not None else ""))
+        source.stop()
+        if recorder:
+            recorder.close()
+        centroid, cn = speakers.teacher_centroid()
+        if centroid is not None:
+            self.store.save_teacher_voiceprint(self.subject["id"], centroid, cn)
+        self.store.close_class(self.class_id)
+        self.emit({"type": "partial", "text": ""})
+        self._status("Class finished" + (" · teacher voiceprint saved" if centroid is not None else ""))

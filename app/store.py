@@ -1,4 +1,4 @@
-"""Almacén SQLite: asignaturas -> clases -> frases (+ FTS5 para búsqueda por texto)."""
+"""SQLite store: subjects -> classes -> sentences (+ FTS5 for full-text search)."""
 import sqlite3
 import threading
 import time
@@ -6,106 +6,109 @@ from pathlib import Path
 
 import numpy as np
 
-ESQUEMA = """
-CREATE TABLE IF NOT EXISTS asignaturas (
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS subjects (
     id INTEGER PRIMARY KEY,
-    nombre TEXT UNIQUE NOT NULL,
-    perfil_inquietudes TEXT DEFAULT '',
-    estilo_preguntas TEXT DEFAULT '{"trato":"tu","longitud":"corta"}',
-    huella_profe BLOB,
-    huella_n INTEGER DEFAULT 0
+    name TEXT UNIQUE NOT NULL,
+    concerns_profile TEXT DEFAULT '',
+    question_style TEXT DEFAULT '{"address":"informal","length":"short"}',
+    teacher_voiceprint BLOB,
+    voiceprint_n INTEGER DEFAULT 0
 );
-CREATE TABLE IF NOT EXISTS clases (
+CREATE TABLE IF NOT EXISTS classes (
     id INTEGER PRIMARY KEY,
-    asignatura_id INTEGER NOT NULL REFERENCES asignaturas(id),
-    inicio REAL NOT NULL,
-    fin REAL,
+    subject_id INTEGER NOT NULL REFERENCES subjects(id),
+    started_at REAL NOT NULL,
+    ended_at REAL,
     audio_path TEXT,
-    idioma TEXT
+    language TEXT
 );
-CREATE TABLE IF NOT EXISTS frases (
+CREATE TABLE IF NOT EXISTS sentences (
     id INTEGER PRIMARY KEY,
-    clase_id INTEGER NOT NULL REFERENCES clases(id),
-    t_inicio REAL NOT NULL,
-    t_fin REAL NOT NULL,
-    texto TEXT NOT NULL,
-    hablante TEXT NOT NULL,          -- 'P' profesor, 'A' alumno, '?' desconocido
-    p_profe REAL,
+    class_id INTEGER NOT NULL REFERENCES classes(id),
+    t_start REAL NOT NULL,
+    t_end REAL NOT NULL,
+    text TEXT NOT NULL,
+    speaker TEXT NOT NULL,           -- 'T' teacher, 'S' student, '?' unknown
+    p_teacher REAL,
     cluster INTEGER,
-    embedding BLOB                   -- embedding de texto (fase 2)
+    embedding BLOB                   -- text embedding (phase 2)
 );
-CREATE INDEX IF NOT EXISTS frases_clase ON frases(clase_id, t_inicio);
-CREATE VIRTUAL TABLE IF NOT EXISTS frases_fts USING fts5(texto, content='frases', content_rowid='id');
-CREATE TRIGGER IF NOT EXISTS frases_ai AFTER INSERT ON frases BEGIN
-    INSERT INTO frases_fts(rowid, texto) VALUES (new.id, new.texto);
+CREATE INDEX IF NOT EXISTS sentences_class ON sentences(class_id, t_start);
+CREATE VIRTUAL TABLE IF NOT EXISTS sentences_fts USING fts5(text, content='sentences', content_rowid='id');
+CREATE TRIGGER IF NOT EXISTS sentences_ai AFTER INSERT ON sentences BEGIN
+    INSERT INTO sentences_fts(rowid, text) VALUES (new.id, new.text);
 END;
-CREATE TRIGGER IF NOT EXISTS frases_au AFTER UPDATE OF texto ON frases BEGIN
-    INSERT INTO frases_fts(frases_fts, rowid, texto) VALUES ('delete', old.id, old.texto);
-    INSERT INTO frases_fts(rowid, texto) VALUES (new.id, new.texto);
+CREATE TRIGGER IF NOT EXISTS sentences_au AFTER UPDATE OF text ON sentences BEGIN
+    INSERT INTO sentences_fts(sentences_fts, rowid, text) VALUES ('delete', old.id, old.text);
+    INSERT INTO sentences_fts(rowid, text) VALUES (new.id, new.text);
 END;
 """
 
 
 class Store:
-    def __init__(self, ruta: Path):
-        self.db = sqlite3.connect(ruta, check_same_thread=False)
+    def __init__(self, path: Path):
+        self.db = sqlite3.connect(path, check_same_thread=False)
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA journal_mode=WAL")
-        self.db.executescript(ESQUEMA)
+        self.db.executescript(SCHEMA)
         self.lock = threading.Lock()
 
-    def _x(self, sql, args=()):
+    def _exec(self, sql, args=()):
         with self.lock:
             cur = self.db.execute(sql, args)
             self.db.commit()
             return cur
 
-    def _q(self, sql, args=()):
+    def _query(self, sql, args=()):
         with self.lock:
             return [dict(r) for r in self.db.execute(sql, args).fetchall()]
 
-    # --- asignaturas
-    def asignatura(self, nombre: str) -> dict:
-        self._x("INSERT OR IGNORE INTO asignaturas(nombre) VALUES (?)", (nombre,))
-        return self._q("SELECT * FROM asignaturas WHERE nombre=?", (nombre,))[0]
+    # --- subjects
+    def subject(self, name: str) -> dict:
+        self._exec("INSERT OR IGNORE INTO subjects(name) VALUES (?)", (name,))
+        return self._query("SELECT * FROM subjects WHERE name=?", (name,))[0]
 
-    def huella_profe(self, asignatura_id: int) -> np.ndarray | None:
-        r = self._q("SELECT huella_profe FROM asignaturas WHERE id=?", (asignatura_id,))
-        b = r[0]["huella_profe"] if r else None
+    def teacher_voiceprint(self, subject_id: int) -> np.ndarray | None:
+        r = self._query("SELECT teacher_voiceprint FROM subjects WHERE id=?", (subject_id,))
+        b = r[0]["teacher_voiceprint"] if r else None
         return np.frombuffer(b, dtype=np.float32).copy() if b else None
 
-    def guardar_huella_profe(self, asignatura_id: int, centroide: np.ndarray, n: int):
-        """Media ponderada con la huella previa, para que mejore clase a clase."""
-        r = self._q("SELECT huella_profe, huella_n FROM asignaturas WHERE id=?", (asignatura_id,))[0]
-        c = centroide.astype(np.float32)
-        if r["huella_profe"]:
-            prev = np.frombuffer(r["huella_profe"], dtype=np.float32)
-            pn = min(r["huella_n"], 200)
+    def save_teacher_voiceprint(self, subject_id: int, centroid: np.ndarray, n: int):
+        """Weighted average with the previous voiceprint, so it improves class after class."""
+        r = self._query("SELECT teacher_voiceprint, voiceprint_n FROM subjects WHERE id=?",
+                        (subject_id,))[0]
+        c = centroid.astype(np.float32)
+        if r["teacher_voiceprint"]:
+            prev = np.frombuffer(r["teacher_voiceprint"], dtype=np.float32)
+            pn = min(r["voiceprint_n"], 200)
             c = (prev * pn + c * n) / (pn + n)
         c = c / (np.linalg.norm(c) + 1e-9)
-        self._x("UPDATE asignaturas SET huella_profe=?, huella_n=? WHERE id=?",
-                (c.astype(np.float32).tobytes(), min(r["huella_n"] + n, 200), asignatura_id))
+        self._exec("UPDATE subjects SET teacher_voiceprint=?, voiceprint_n=? WHERE id=?",
+                   (c.astype(np.float32).tobytes(), min(r["voiceprint_n"] + n, 200), subject_id))
 
-    # --- clases
-    def nueva_clase(self, asignatura_id: int, idioma: str) -> int:
-        return self._x("INSERT INTO clases(asignatura_id, inicio, idioma) VALUES (?,?,?)",
-                       (asignatura_id, time.time(), idioma)).lastrowid
+    # --- classes
+    def new_class(self, subject_id: int, language: str) -> int:
+        return self._exec("INSERT INTO classes(subject_id, started_at, language) VALUES (?,?,?)",
+                          (subject_id, time.time(), language)).lastrowid
 
-    def set_audio(self, clase_id: int, ruta: str):
-        self._x("UPDATE clases SET audio_path=? WHERE id=?", (ruta, clase_id))
+    def set_audio(self, class_id: int, path: str):
+        self._exec("UPDATE classes SET audio_path=? WHERE id=?", (path, class_id))
 
-    def cerrar_clase(self, clase_id: int):
-        self._x("UPDATE clases SET fin=? WHERE id=?", (time.time(), clase_id))
+    def close_class(self, class_id: int):
+        self._exec("UPDATE classes SET ended_at=? WHERE id=?", (time.time(), class_id))
 
-    # --- frases
-    def nueva_frase(self, clase_id, t0, t1, texto, hablante, p_profe, cluster) -> int:
-        return self._x(
-            "INSERT INTO frases(clase_id,t_inicio,t_fin,texto,hablante,p_profe,cluster) VALUES (?,?,?,?,?,?,?)",
-            (clase_id, t0, t1, texto, hablante, p_profe, cluster)).lastrowid
+    # --- sentences
+    def new_sentence(self, class_id, t0, t1, text, speaker, p_teacher, cluster) -> int:
+        return self._exec(
+            "INSERT INTO sentences(class_id,t_start,t_end,text,speaker,p_teacher,cluster) "
+            "VALUES (?,?,?,?,?,?,?)",
+            (class_id, t0, t1, text, speaker, p_teacher, cluster)).lastrowid
 
-    def set_hablante(self, frase_id: int, hablante: str, p_profe: float):
-        self._x("UPDATE frases SET hablante=?, p_profe=? WHERE id=?", (hablante, p_profe, frase_id))
+    def set_speaker(self, sentence_id: int, speaker: str, p_teacher: float):
+        self._exec("UPDATE sentences SET speaker=?, p_teacher=? WHERE id=?",
+                   (speaker, p_teacher, sentence_id))
 
-    def frases(self, clase_id: int) -> list[dict]:
-        return self._q("SELECT id,t_inicio,t_fin,texto,hablante,p_profe FROM frases "
-                       "WHERE clase_id=? ORDER BY t_inicio", (clase_id,))
+    def sentences(self, class_id: int) -> list[dict]:
+        return self._query("SELECT id,t_start,t_end,text,speaker,p_teacher FROM sentences "
+                           "WHERE class_id=? ORDER BY t_start", (class_id,))
