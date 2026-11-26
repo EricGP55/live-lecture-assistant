@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Live class assistant — phase 1: live transcription + who is speaking.
+"""Live class assistant: live transcription, who is speaking, and questions to the AI.
 
 Usage:
   python main.py --subject "Calculus"                     # default microphone
@@ -15,7 +15,10 @@ import uvicorn
 
 from app.audio import list_devices
 from app.config import load
+from app.embeddings import Embedder
 from app.pipeline import Pipeline
+from app.qa import QA
+from app.search import Retriever
 from app.server import Hub, create_app
 from app.store import Store
 
@@ -42,8 +45,12 @@ def main():
         cfg["audio"]["device"] = a.device
     store = Store(cfg["data"] / "class.db")
     hub = Hub()
-    app = create_app(hub, lambda: Pipeline(cfg, store, a.subject, hub.emit,
-                                           audio_file=a.file, fast=a.fast))
+    embedder = Embedder()
+    app = create_app(
+        hub,
+        lambda: Pipeline(cfg, store, a.subject, hub.emit, audio_file=a.file, fast=a.fast,
+                         embedder=embedder),
+        lambda: QA(cfg, Retriever(store, embedder)))
     host, port = cfg["server"]["host"], cfg["server"]["port"]
     url = f"http://{host}:{port}/"
     print(f"Opening {url}  (mini: {url}mini) · Ctrl+C to end the class")

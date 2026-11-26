@@ -1,0 +1,34 @@
+#!/bin/bash
+# Blocks commits that add or modify private files (see .githooks/blocked-paths)
+# or that contain something that looks like a secret.
+# Enabled with: git config core.hooksPath .githooks
+set -e
+ROOT=$(git rev-parse --show-toplevel)
+LIST="$ROOT/.githooks/blocked-paths"
+fail=0
+
+# 1) blocked paths (deletions are allowed, so a file can be removed from the repo)
+while IFS= read -r f; do
+  [ -z "$f" ] && continue
+  while IFS= read -r pat; do
+    case "$pat" in ''|\#*) continue ;; esac
+    # shellcheck disable=SC2254
+    case "$f" in $pat|*/$pat)
+      echo "✋ Blocked: '$f' is private and must not be committed (rule: $pat)." >&2
+      fail=1 ;;
+    esac
+  done < "$LIST"
+done < <(git diff --cached --name-only --diff-filter=ACMR)
+
+# 2) secrets in the added lines
+SECRET='sk-ant-[A-Za-z0-9_-]{10,}|ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{16}|hf_[A-Za-z0-9]{30,}|-----BEGIN [A-Z ]*PRIVATE KEY-----'
+if git diff --cached -U0 --diff-filter=ACMR | grep -E '^\+' | grep -qE "$SECRET"; then
+  echo "✋ Blocked: the staged changes contain something that looks like a key or token." >&2
+  git diff --cached -U0 --diff-filter=ACMR | grep -nE "$SECRET" | sed -E 's/(.{0,40}).*/\1…/' >&2
+  fail=1
+fi
+
+if [ "$fail" -ne 0 ]; then
+  echo "Commit cancelled. Unstage those files with: git restore --staged <file>" >&2
+  exit 1
+fi

@@ -43,7 +43,25 @@ CREATE TRIGGER IF NOT EXISTS sentences_au AFTER UPDATE OF text ON sentences BEGI
     INSERT INTO sentences_fts(sentences_fts, rowid, text) VALUES ('delete', old.id, old.text);
     INSERT INTO sentences_fts(rowid, text) VALUES (new.id, new.text);
 END;
+CREATE TABLE IF NOT EXISTS questions (
+    id INTEGER PRIMARY KEY,
+    class_id INTEGER REFERENCES classes(id),
+    asked_at REAL NOT NULL,
+    t_class REAL,                    -- class time (s) when it was asked
+    scope TEXT NOT NULL,             -- 'class' | 'subject' | 'all'
+    question TEXT NOT NULL,
+    answer TEXT,
+    sources TEXT,                    -- JSON list of sentence ids used as context
+    tokens_in INTEGER,
+    tokens_out INTEGER
+);
 """
+
+SCOPE_SQL = {
+    "class": "s.class_id = :class_id",
+    "subject": "c.subject_id = :subject_id",
+    "all": "1",
+}
 
 
 class Store:
@@ -108,6 +126,44 @@ class Store:
     def set_speaker(self, sentence_id: int, speaker: str, p_teacher: float):
         self._exec("UPDATE sentences SET speaker=?, p_teacher=? WHERE id=?",
                    (speaker, p_teacher, sentence_id))
+
+    def set_embedding(self, sentence_id: int, vec: np.ndarray):
+        self._exec("UPDATE sentences SET embedding=? WHERE id=?",
+                   (vec.astype(np.float32).tobytes(), sentence_id))
+
+    # --- search
+    def scope_rows(self, scope: str, class_id: int, subject_id: int) -> list[dict]:
+        """Sentences in scope, with class date, for retrieval."""
+        return self._query(
+            "SELECT s.id, s.class_id, s.t_start, s.speaker, s.text, s.embedding, c.started_at "
+            "FROM sentences s JOIN classes c ON c.id = s.class_id "
+            f"WHERE {SCOPE_SQL[scope]} ORDER BY s.class_id, s.t_start",
+            {"class_id": class_id, "subject_id": subject_id})
+
+    def fts(self, match: str, scope: str, class_id: int, subject_id: int, limit=20) -> list[int]:
+        """Sentence ids ranked by BM25."""
+        try:
+            rows = self._query(
+                "SELECT s.id FROM sentences_fts f JOIN sentences s ON s.id = f.rowid "
+                "JOIN classes c ON c.id = s.class_id "
+                f"WHERE sentences_fts MATCH :m AND {SCOPE_SQL[scope]} ORDER BY bm25(sentences_fts) LIMIT :n",
+                {"m": match, "class_id": class_id, "subject_id": subject_id, "n": limit})
+        except sqlite3.OperationalError:
+            return []
+        return [r["id"] for r in rows]
+
+    # --- questions
+    def save_question(self, class_id, t_class, scope, question, answer, sources, tokens_in, tokens_out):
+        import json
+        return self._exec(
+            "INSERT INTO questions(class_id,asked_at,t_class,scope,question,answer,sources,tokens_in,tokens_out) "
+            "VALUES (?,?,?,?,?,?,?,?,?)",
+            (class_id, time.time(), t_class, scope, question, answer, json.dumps(sources),
+             tokens_in, tokens_out)).lastrowid
+
+    def questions(self, class_id: int) -> list[dict]:
+        return self._query("SELECT id, question, answer, scope FROM questions WHERE class_id=? ORDER BY id",
+                           (class_id,))
 
     def sentences(self, class_id: int) -> list[dict]:
         return self._query("SELECT id,t_start,t_end,text,speaker,p_teacher FROM sentences "

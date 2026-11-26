@@ -6,3 +6,6 @@ numpy
 fastapi
 uvicorn[standard]
 pyyaml
+claude-agent-sdk==0.2.189
+onnxruntime
+tokenizers

@@ -5,39 +5,59 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Class · mini</title>
 <style>
-  :root { --bg:#0b0d11; --line:#1f242d; --text:#d9dce2; --muted:#7b8394; --teacher:#5b9dff; --student:#f0a04b; }
-  body { margin:0; background:var(--bg); color:var(--text); font:13px/1.45 -apple-system, sans-serif; }
+  :root { --bg:#0b0d11; --line:#1f242d; --text:#d9dce2; --muted:#7b8394; --teacher:#5b9dff; --student:#f0a04b; --accent:#8b7cf6; }
+  [hidden] { display:none !important; }
+  html, body { height:100%; }
+  body { margin:0; background:var(--bg); color:var(--text); font:13px/1.45 -apple-system, sans-serif;
+         display:flex; flex-direction:column; }
   .top { display:flex; align-items:center; gap:8px; padding:8px 12px; border-bottom:1px solid var(--line); color:var(--muted); font-size:12px; }
   .rec { width:7px; height:7px; border-radius:50%; background:#444; }
   .rec.on { background:#ef4444; }
-  #alerts { padding:10px 12px; border-bottom:1px solid var(--line); color:var(--muted); font-size:12px; }
-  #list { padding:6px 12px 60px; }
+  #alerts { padding:8px 12px; border-bottom:1px solid var(--line); color:var(--muted); font-size:12px; }
+  #list { padding:6px 12px; flex:1; overflow-y:auto; }
   .f { padding:5px 0; border-bottom:1px solid var(--line); }
   .f b { font-size:10px; margin-right:6px; }
   .T b { color:var(--teacher); } .S b { color:var(--student); } .X b { color:var(--muted); }
   .partial { color:var(--muted); font-style:italic; }
-  .box { position:fixed; bottom:0; left:0; right:0; padding:8px 12px; border-top:1px solid var(--line); background:var(--bg); }
-  .box input { width:100%; box-sizing:border-box; background:#151920; border:1px solid var(--line); color:var(--muted);
-                border-radius:6px; padding:7px 9px; font:inherit; }
+  #answer { border-top:1px solid var(--line); padding:8px 12px; max-height:45%; overflow-y:auto; background:#11141b; }
+  #answer .q { color:var(--muted); font-size:12px; margin-bottom:3px; }
+  #answer .a { white-space:pre-wrap; }
+  #answer .a.thinking::after { content:'▍'; color:var(--accent); }
+  #answer .err { color:#f87171; }
+  .box { padding:8px 12px; border-top:1px solid var(--line); }
+  .box input { width:100%; box-sizing:border-box; background:#151920; border:1px solid var(--line); color:var(--text);
+               border-radius:6px; padding:7px 9px; font:inherit; }
+  .box input:focus { outline:1px solid var(--accent); }
 </style>
 </head>
 <body>
 <div class="top"><span class="rec" id="rec"></span><span id="subject">Class</span></div>
 <div id="alerts">Alerts: coming in phase 4.</div>
 <div id="list"></div>
-<div class="box"><input disabled placeholder="Ask the AI (phase 2)…"></div>
+<div id="answer" hidden><div class="q" id="aq"></div><div class="a" id="aa"></div></div>
+<form class="box" id="ask"><input id="question" placeholder="Ask about the class… (Enter)" autocomplete="off"></form>
 <script>
 const $ = id => document.getElementById(id);
 const cls = sp => sp === 'T' ? 'T' : sp === 'S' ? 'S' : 'X';
-const esc = t => t.replace(/</g, '&lt;');
-const latest = new Map(); let partial = '';
+const esc = t => t.replace(/&/g,'&amp;').replace(/</g,'&lt;');
+const latest = new Map(); let partial = '', ws = null, busy = false, answer = '';
 function draw() {
   const items = [...latest.values()].slice(-6);
   $('list').innerHTML = items.map(f => `<div class="f ${cls(f.speaker)}"><b>${f.speaker || '?'}</b>${esc(f.text)}</div>`).join('')
     + (partial ? `<div class="f partial">${esc(partial)}</div>` : '');
+  $('list').scrollTop = $('list').scrollHeight;
 }
+$('ask').addEventListener('submit', e => {
+  e.preventDefault();
+  const q = $('question').value.trim();
+  if (!q || busy || !ws || ws.readyState !== 1) return;
+  busy = true; answer = '';
+  $('answer').hidden = false; $('aq').textContent = q; $('aa').textContent = ''; $('aa').classList.add('thinking');
+  ws.send(JSON.stringify({ type: 'ask', question: q, scope: 'class' }));
+  $('question').value = '';
+});
 function connect() {
-  const ws = new WebSocket(`ws://${location.host}/ws`);
+  ws = new WebSocket(`ws://${location.host}/ws`);
   ws.onmessage = e => {
     const ev = JSON.parse(e.data);
     if (ev.type === 'sentence') { latest.set(ev.id, ev); if (latest.size > 20) latest.delete(latest.keys().next().value); draw(); }
@@ -45,8 +65,13 @@ function connect() {
     else if (ev.type === 'partial') { partial = ev.text || ''; draw(); }
     else if (ev.type === 'class') $('subject').textContent = ev.subject;
     else if (ev.type === 'status') $('rec').classList.toggle('on', ev.text.startsWith('Listening'));
+    else if (ev.type === 'answer_delta' && busy) { answer += ev.text; $('aa').innerHTML = esc(answer).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>'); }
+    else if (ev.type === 'answer_done' && busy) {
+      busy = false; $('aa').classList.remove('thinking');
+      if (ev.error) $('aa').innerHTML += `<span class="err">\n⚠ ${esc(ev.error)}</span>`;
+    }
   };
-  ws.onclose = () => setTimeout(connect, 1500);
+  ws.onclose = () => { busy = false; setTimeout(connect, 1500); };
 }
 connect();
 </script>

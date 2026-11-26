@@ -16,14 +16,21 @@ from .stt import Transcriber
 
 
 class Pipeline(threading.Thread):
-    def __init__(self, cfg: dict, store: Store, subject: str, emit, audio_file=None, fast=False):
+    def __init__(self, cfg: dict, store: Store, subject: str, emit, audio_file=None, fast=False,
+                 embedder=None):
         super().__init__(daemon=True)
         self.cfg, self.store, self.emit = cfg, store, emit
         self.subject = store.subject(subject)
         self.audio_file, self.fast = audio_file, fast
+        self.embedder = embedder  # optional: embeds each sentence for search (phase 2)
+        self.t_now = 0.0
         self._stop_event = threading.Event()
         self.class_id = None
         self.status = "Starting…"
+
+    def current_time(self) -> float:
+        """Class time in seconds (audio consumed so far)."""
+        return self.t_now
 
     def stop(self):
         self._stop_event.set()
@@ -101,6 +108,8 @@ class Pipeline(threading.Thread):
             t0, t1 = seg_start / SR, (seg_start + len(samples)) / SR
             sid = self.store.new_sentence(self.class_id, t0, t1, text, label, p, cluster)
             speakers.set_id(-1, sid)
+            if self.embedder is not None:
+                self.store.set_embedding(sid, self.embedder.passages([text])[0])
             proc_ms = int((time.monotonic() - t_proc) * 1000)
             self.emit({"type": "sentence", "id": sid, "t0": t0, "t1": t1, "text": text,
                        "speaker": label, "p": round(p, 2), "proc_ms": proc_ms})
@@ -122,6 +131,7 @@ class Pipeline(threading.Thread):
             ring[pos:pos + first] = x[:first]
             ring[:k - first] = x[first:]
             n += k
+            self.t_now = n / SR
 
             vad.accept_waveform(x)
             speaking = vad.is_speech_detected()

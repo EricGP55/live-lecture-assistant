@@ -1,0 +1,10 @@
+# Paths that must never be committed (one glob per line, matched against the repo-relative path).
+DISENO.md
+data/*
+models/*
+.env
+.env.*
+*.pem
+*.key
+id_rsa*
+id_ed25519*

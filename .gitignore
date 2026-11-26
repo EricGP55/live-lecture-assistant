@@ -1,5 +1,6 @@
 .venv/
 data/
-models/*.onnx
+models/
 tests/*.wav
 __pycache__/
+DISENO.md

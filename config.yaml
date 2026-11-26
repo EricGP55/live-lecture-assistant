@@ -20,6 +20,12 @@ speakers:
   saved_teacher_threshold: 0.65  # similarity with the subject's saved teacher voiceprint
   min_speech_to_decide_s: 20     # seconds of speech before fixing who the teacher is (when no voiceprint exists)
 
+llm:
+  backend: subscription # uses your Claude subscription login (Claude Agent SDK); no API key
+  answer_model: sonnet  # sonnet = better answers, haiku = faster
+  effort: low           # low keeps answers quick and cheap
+  context_chars: 5000   # max transcript characters sent per question (~1,300 tokens)
+
 server:
   host: 127.0.0.1       # only reachable from this Mac
   port: 8765
