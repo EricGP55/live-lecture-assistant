@@ -180,4 +180,5 @@ class Pipeline(threading.Thread):
             self.store.save_teacher_voiceprint(self.subject["id"], centroid, cn)
         self.store.close_class(self.class_id)
         self.emit({"type": "partial", "text": ""})
+        self.emit({"type": "class_end", "class_id": self.class_id})
         self._status("Class finished" + (" · teacher voiceprint saved" if centroid is not None else ""))

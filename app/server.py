@@ -10,6 +10,8 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 
+from pathlib import Path
+
 from .config import ROOT
 
 WEB = ROOT / "web"
@@ -66,7 +68,10 @@ def create_app(hub: Hub, pipeline_factory, services_factory=None):
             return
         try:
             if ev["type"] == "sentence":
-                await asyncio.gather(doubts.on_sentence(ev, p), alerts.on_sentence(ev, p))
+                await asyncio.gather(doubts.on_sentence(ev, p), alerts.on_sentence(ev, p),
+                                     state["svc"]["notes"].on_sentence(p))
+            elif ev["type"] == "class_end":
+                state["svc"]["notes"].generate_once(ev["class_id"])
             elif ev["type"] == "pause":
                 await doubts.on_pause(ev, p)
         except Exception as e:  # watchers must never break the class
@@ -87,6 +92,15 @@ def create_app(hub: Hub, pipeline_factory, services_factory=None):
         yield
         p.stop()
         await asyncio.to_thread(p.join, 30)
+        notes = state["svc"].get("notes")
+        if notes and p.class_id is not None:
+            # Ctrl+C: finish (or write) the notes before closing; the "End class" button already started them
+            print("Writing the class notes…")
+            try:
+                path = await asyncio.wait_for(asyncio.shield(notes.generate_once(p.class_id)), 240)
+                print(f"Notes: {path}" if path else "No notes: nothing was transcribed.")
+            except Exception as e:
+                print("Could not write the notes:", e)
         if "llm" in state["svc"]:
             await state["svc"]["llm"].close()
         task.cancel()
@@ -100,6 +114,31 @@ def create_app(hub: Hub, pipeline_factory, services_factory=None):
     @app.get("/mini")
     async def mini():
         return FileResponse(WEB / "mini.html")
+
+    @app.get("/notes")
+    @app.get("/notes/{class_id}")
+    async def notes_page(class_id: int | None = None):
+        return FileResponse(WEB / "notes.html")
+
+    @app.get("/api/classes")
+    async def classes():
+        return await asyncio.to_thread(state["pipeline"].store.classes)
+
+    @app.get("/api/notes/{class_id}")
+    async def notes_md(class_id: int):
+        from fastapi.responses import PlainTextResponse
+        info = await asyncio.to_thread(state["pipeline"].store.class_info, class_id)
+        path = info and info.get("notes_path")
+        if not path or not Path(path).exists():
+            return PlainTextResponse("", status_code=404)
+        return PlainTextResponse(Path(path).read_text(encoding="utf-8"), media_type="text/markdown; charset=utf-8")
+
+    @app.post("/api/notes/{class_id}")
+    async def notes_regen(class_id: int):
+        notes = state["svc"].get("notes")
+        notes.done.pop(class_id, None)
+        path = await notes.generate_once(class_id)
+        return {"ok": bool(path), "path": path}
 
     @app.post("/api/mini")
     async def open_mini():

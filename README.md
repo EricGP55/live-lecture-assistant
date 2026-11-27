@@ -2,7 +2,7 @@
 
 Records a class, transcribes it live, tells apart the **teacher (T)** from the **students (S)**, and lets you **ask questions about what was said** , **keep track of your doubts** and **get alerted when something important or complex happens** while the class is going on. Audio and transcription stay on the Mac; only short transcript excerpts are sent to Claude when you ask something.
 
-**Status:** phases 1–4 done (live transcription, speakers, history, audio, questions to the AI, doubts mode, alerts). Next: phase 5 (notes after class and polish).
+**Status:** phases 1–5 done (live transcription, speakers, history, audio, questions to the AI, doubts mode, alerts, notes after class). Next: try it in a real class and tune the thresholds.
 
 ## Setup (once)
 
@@ -35,7 +35,7 @@ On first run, the Parakeet v3 model (~1.2 GB) is downloaded to `~/.cache/hugging
   - **Move it:** drag the bar.
   - **Close it:** ✕.
   - It remembers whether it was collapsed.
-- **Ctrl+C** or the "End class" button closes the class. The text, the audio and the teacher's voiceprint are saved.
+- **Ctrl+C** or the "End class" button closes the class. The text, the audio and the teacher's voiceprint are saved, and the **class notes** are written.
 - On first run, macOS asks for **microphone permission** for the Terminal.
 
 Other options:
@@ -65,6 +65,27 @@ Open the **Doubts** tab, or switch the mini window to *Doubt*, and write what yo
 - **Suggest questions:** gives 2–3 questions for right now, based on the last minutes, your open doubts and your **Profile**.
 - **Profile tab:** what worries you in this subject, plus whether the questions should use *tú* or *usted* and be short or linked to what was said. It is saved per subject.
 - **Carried over:** unresolved doubts appear again in the next class of the same subject.
+
+### Notes after class
+
+When the class ends, a Markdown file is written to `data/notes/<subject>/<date>.md`. It has these sections:
+- Summary
+- Important / may be on the exam
+- Definitions and formulas
+- Tasks and dates
+- **Unresolved doubts**, with the question ready to ask
+- Doubts answered in class
+- Your questions
+- Alerts
+- Class data (duration, teacher %, tokens)
+
+Open **Notes** on the main page, or `/notes`, to see every class. From there you can read the notes, copy or download the Markdown, or rewrite them. From the terminal:
+
+```bash
+.venv/bin/python main.py --notes last                      # (re)write the notes of the last class
+.venv/bin/python main.py --notes last --subject "Calculus" # ...of the last class of a subject
+.venv/bin/python main.py --notes 12                        # ...of class 12
+```
 
 ### Alerts
 
@@ -110,6 +131,10 @@ Rules can be switched on and off in the Alerts tab, where you can also add your 
 8. **Alerts (phase 4):**
    - **Local first:** most alerts come from text rules, local embeddings and word counts, at 0 tokens. Claude is only asked about similar-wording candidates without a clear text rule, and about your own rules, in a single short call.
    - **Learning:** feedback is stored as examples (`alert_examples`) and per-rule thresholds (`alert_rules`).
+9. **Notes (phase 5):**
+   - **During the class:** every 10 minutes, the new stretch is condensed into ~120 words, so the end of a 1-hour class only reads ~6 short summaries instead of the whole transcript.
+   - **Short classes:** they send the transcript directly.
+   - **At the end:** one call returns the summary, exam hints, definitions and tasks as JSON. Doubts, questions, alerts and stats are filled in from the database at no cost.
 
 ## Data
 
@@ -117,6 +142,7 @@ Rules can be switched on and off in the Alerts tab, where you can also add your 
 |---|---|
 | `data/class.db` | SQLite: subjects, classes, sentences (with FTS5 search) and the teacher voiceprint per subject |
 | `data/audio/*.opus` | Audio of each class |
+| `data/notes/<subject>/*.md` | Notes of each class |
 
 Questions and answers are stored in the `questions` table of `data/class.db`, together with the sentences used as context and the tokens spent. Doubts, with their status, evidence, suggested questions and tokens, are in the `doubts` table. Alerts and your feedback are in `alerts`, `alert_rules` and `alert_examples`.
 
@@ -140,6 +166,7 @@ tests/make_test_audio.sh                    # builds a sample class with two sys
 .venv/bin/python tests/test_qa.py           # transcribes it and asks 4 questions through your subscription
 .venv/bin/python tests/test_doubts.py       # replays it live with 3 doubts: check, watch, suggest
 .venv/bin/python tests/test_alerts.py       # alert rules, a custom rule confirmed by Claude, and 👎 learning
+.venv/bin/python tests/test_notes.py        # writes the notes of the sample class, direct and chunked
 ```
 
 ## Measured performance (MacBook Air M1, 8 GB)
@@ -152,3 +179,4 @@ tests/make_test_audio.sh                    # builds a sample class with two sys
 - **Doubts:** the first check costs ~1,400–2,300 tokens. Each confirmation while watching costs ~500–1,000, and only happens on a clear match.
 - **Alerts:** on the sample class, 0 tokens: every alert came from local rules. Only your own rules and borderline wording use Claude, at a few hundred tokens each.
 - **Mini window (native):** ~52 MB of RAM.
+- **Notes:** ~2,700 tokens for a short class. For a 1-hour class, about ~1,300 tokens per 10-minute summary plus ~4,000 for the final notes, written in 10–20 s after the class ends.

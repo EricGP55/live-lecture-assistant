@@ -66,6 +66,7 @@ class SubscriptionLLM:
             cwd=tempfile.gettempdir(),
         )
         self._spare: asyncio.Task | None = None
+        self.totals = {"calls": 0, "tokens_in": 0, "tokens_out": 0}  # this run, for the notes
         self._lock = asyncio.Lock()
 
     async def _open(self) -> ClaudeSDKClient:
@@ -114,6 +115,9 @@ class SubscriptionLLM:
                         ans.tokens_in = (u.get("input_tokens", 0) + u.get("cache_read_input_tokens", 0)
                                          + u.get("cache_creation_input_tokens", 0))
                         ans.tokens_out = u.get("output_tokens", 0)
+                        self.totals["calls"] += 1
+                        self.totals["tokens_in"] += ans.tokens_in
+                        self.totals["tokens_out"] += ans.tokens_out
                         if msg.is_error:
                             ans.error = msg.result or "Claude returned an error"
             except Exception as e:

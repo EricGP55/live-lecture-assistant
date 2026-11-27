@@ -41,6 +41,10 @@ alerts:
   new_terms_warmup_s: 90   # ignore "new terms" during the first minute and a half (everything is new)
   # Per-rule thresholds live in the database and change with your 👍/👎 (see the Alerts tab).
 
+notes:
+  chunk_minutes: 10        # condense the class every 10 minutes while it runs (cheaper and faster at the end)
+  direct_chars: 6000       # shorter classes send the whole transcript at the end instead
+
 ui:
   open_mini: false         # open the always-on-top mini window when the class starts (or use --mini)
 

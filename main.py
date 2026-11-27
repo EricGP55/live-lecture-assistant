@@ -21,6 +21,7 @@ from app.config import load
 from app.doubts import Doubts
 from app.embeddings import Embedder
 from app.llm import SubscriptionLLM
+from app.notes import Notes
 from app.pipeline import Pipeline
 from app.qa import QA
 from app.search import Retriever
@@ -37,16 +38,20 @@ def main():
     ap.add_argument("--fast", action="store_true", help="with --file: process without waiting for real time")
     ap.add_argument("--no-browser", action="store_true", help="do not open the page automatically")
     ap.add_argument("--mini", action="store_true", help="also open the always-on-top mini window")
+    ap.add_argument("--notes", metavar="CLASS", help="(re)write the notes of a class and exit: a class id, "
+                    "or 'last' (the last class, of --subject if given)")
     a = ap.parse_args()
 
     if a.devices:
         for d in list_devices():
             print(f"[{d['index']}] {d['name']}  ({d['channels']} channels)")
         return
+    cfg = load()
+    if a.notes:
+        return write_notes(cfg, a.notes, a.subject)
     if not a.subject:
         ap.error("--subject is required")
 
-    cfg = load()
     if a.device is not None:
         cfg["audio"]["device"] = a.device
     store = Store(cfg["data"] / "class.db")
@@ -59,7 +64,8 @@ def main():
         retriever = Retriever(store, embedder)
         return {"llm": llm, "qa": QA(cfg, retriever, llm),
                 "doubts": Doubts(cfg, store, retriever, embedder, llm, send_all),
-                "alerts": Alerts(cfg, store, embedder, llm, send_all)}
+                "alerts": Alerts(cfg, store, embedder, llm, send_all),
+                "notes": Notes(cfg, store, llm, send_all)}
 
     app = create_app(
         hub,
@@ -67,6 +73,11 @@ def main():
                          embedder=embedder),
         services)
     host, port = cfg["server"]["host"], cfg["server"]["port"]
+    import socket
+    with socket.socket() as probe:  # fail early instead of recording an empty class
+        if probe.connect_ex((host, port)) == 0:
+            raise SystemExit(f"The app is already running on http://{host}:{port}/ — close it first "
+                             "(Ctrl+C in its terminal) or change server.port in config.yaml.")
     app.state.host, app.state.port = host, port
     url = f"http://{host}:{port}/"
     print(f"Opening {url}  (mini: {url}mini) · Ctrl+C to end the class")
@@ -76,6 +87,26 @@ def main():
         threading.Timer(2.0, lambda: subprocess.Popen(
             [sys.executable, str(Path(__file__).parent / "mini_window.py"), url + "mini"])).start()
     uvicorn.run(app, host=host, port=port, log_level="warning")
+
+
+def write_notes(cfg, which, subject=None):
+    """Offline: write the notes of a past class (no microphone, no transcription models)."""
+    import asyncio
+    store = Store(cfg["data"] / "class.db")
+    class_id = store.last_class(subject) if which == "last" else int(which)
+    if not class_id or not store.class_info(class_id):
+        raise SystemExit("Class not found. Use a class id from the Notes page, or 'last'.")
+    llm_cfg = cfg.get("llm", {})
+
+    async def run():
+        llm = SubscriptionLLM(model=llm_cfg.get("answer_model", "sonnet"), effort=llm_cfg.get("effort", "low"))
+        try:
+            return await Notes(cfg, store, llm).generate(class_id)
+        finally:
+            await llm.close()
+
+    path = asyncio.run(run())
+    print(f"Notes: {path}" if path else "Nothing was transcribed in that class.")
 
 
 if __name__ == "__main__":

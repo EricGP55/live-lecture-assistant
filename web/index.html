@@ -130,6 +130,7 @@
   <span class="status" id="status">Connecting…</span>
   <span class="clock" id="clock">00:00</span>
   <span class="level" title="Microphone level"><i id="level"></i></span>
+  <button onclick="window.open('/notes', '_blank')" title="Notes of this and earlier classes">Notes</button>
   <button onclick="openMini()" title="Small window that stays on top of other apps">Mini window</button>
   <button class="stop" onclick="stopClass()">End class</button>
 </header>
@@ -327,13 +328,13 @@ function showTab(name) {
 document.querySelectorAll('.tabs button').forEach(b => b.onclick = () => showTab(b.dataset.tab));
 
 // ---------- toasts
-function toast(title, text, kind = '', onClick = null) {
+function toast(title, text, kind = '', onClick = null, ms = 9000) {
   const el = document.createElement('div');
   el.className = 'toast ' + kind;
   el.innerHTML = `<b>${esc(title)}</b>${renderAnswer(text)}`;
   el.onclick = () => { el.remove(); onClick?.(); };
   $('toasts').appendChild(el);
-  setTimeout(() => el.remove(), 9000);
+  if (ms) setTimeout(() => el.remove(), ms);
 }
 
 // ---------- doubts
@@ -494,6 +495,11 @@ function connect() {
         break; }
       case 'alert': drawAlert(ev, !alertsById.has(ev.id) && live); break;
       case 'alert_rules': drawRules(ev.rules); break;
+      case 'notes':
+        if (ev.status === 'writing') toast('📝 Writing the class notes…', 'This takes up to a minute.', '');
+        else if (ev.status === 'ready') toast('📝 Notes ready', ev.error ? '⚠ ' + ev.error : 'Click to open them.', 'ok',
+                                               () => window.open(ev.url, '_blank'), 0);  // stays until clicked
+        break;
       case 'moment': toast('Good moment to ask', ev.text, 'warn', () => showTab('doubts')); break;
       case 'suggestions': drawSuggestions(ev); break;
       case 'profile':
@@ -528,7 +534,7 @@ async function openMini() {
   window.open('/mini', 'mini', 'width=380,height=560');  // fallback: normal browser window
 }
 async function stopClass() {
-  if (!confirm('End the class? Everything will be saved, including the teacher voiceprint.')) return;
+  if (!confirm('End the class? Everything will be saved and the notes will be written.')) return;
   await fetch('/api/stop', { method: 'POST' });
 }
 setInterval(() => { if (startedAt && live) $('clock').textContent = fmt(Date.now()/1000 - startedAt); }, 1000);

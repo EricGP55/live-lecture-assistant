@@ -105,6 +105,14 @@ CREATE TABLE IF NOT EXISTS alerts (
     created_at REAL NOT NULL
 );
 CREATE INDEX IF NOT EXISTS alerts_class ON alerts(class_id, t);
+CREATE TABLE IF NOT EXISTS summaries (
+    id INTEGER PRIMARY KEY,
+    class_id INTEGER NOT NULL REFERENCES classes(id),
+    t0 REAL NOT NULL,
+    t1 REAL NOT NULL,
+    text TEXT NOT NULL,                -- compact notes of that stretch of the class
+    tokens INTEGER DEFAULT 0
+);
 """
 
 DOUBT_FIELDS = ("status", "answer", "evidence", "missing", "questions", "answered_class_id",
@@ -123,6 +131,10 @@ class Store:
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.executescript(SCHEMA)
+        cols = {r[1] for r in self.db.execute("PRAGMA table_info(classes)")}
+        if "notes_path" not in cols:  # added in phase 5
+            self.db.execute("ALTER TABLE classes ADD COLUMN notes_path TEXT")
+            self.db.commit()
         self.lock = threading.Lock()
 
     def _exec(self, sql, args=()):
@@ -298,6 +310,46 @@ class Store:
     def alerts(self, class_id: int) -> list[dict]:
         return self._query("SELECT a.*, s.text FROM alerts a LEFT JOIN sentences s ON s.id=a.sentence_id "
                            "WHERE a.class_id=? ORDER BY a.t", (class_id,))
+
+    # --- notes (phase 5)
+    def class_info(self, class_id: int) -> dict | None:
+        r = self._query("SELECT c.*, s.name AS subject, s.id AS subject_id FROM classes c "
+                        "JOIN subjects s ON s.id = c.subject_id WHERE c.id=?", (class_id,))
+        return r[0] if r else None
+
+    def last_class(self, subject: str | None = None) -> int | None:
+        r = self._query("SELECT c.id FROM classes c JOIN subjects s ON s.id=c.subject_id "
+                        + ("WHERE s.name=? " if subject else "") + "ORDER BY c.id DESC LIMIT 1",
+                        (subject,) if subject else ())
+        return r[0]["id"] if r else None
+
+    def classes(self) -> list[dict]:
+        return self._query(
+            "SELECT c.id, c.started_at, c.ended_at, c.notes_path, s.name AS subject, "
+            "(SELECT COUNT(*) FROM sentences x WHERE x.class_id=c.id) AS sentences, "
+            "(SELECT MAX(t_end) FROM sentences x WHERE x.class_id=c.id) AS duration "
+            "FROM classes c JOIN subjects s ON s.id=c.subject_id ORDER BY c.id DESC")
+
+    def set_notes_path(self, class_id: int, path: str):
+        self._exec("UPDATE classes SET notes_path=? WHERE id=?", (path, class_id))
+
+    def add_summary(self, class_id, t0, t1, text, tokens):
+        self._exec("INSERT INTO summaries(class_id,t0,t1,text,tokens) VALUES (?,?,?,?,?)",
+                   (class_id, t0, t1, text, tokens))
+
+    def summaries(self, class_id: int) -> list[dict]:
+        return self._query("SELECT t0, t1, text, tokens FROM summaries WHERE class_id=? ORDER BY t0", (class_id,))
+
+    def class_doubts(self, class_id: int, subject_id: int) -> list[dict]:
+        """Doubts written in this class, plus earlier ones still open."""
+        return self._query("SELECT * FROM doubts WHERE (class_id=? OR (subject_id=? AND status IN ('pending','partial'))) "
+                           "AND status != 'dismissed' ORDER BY id", (class_id, subject_id))
+
+    def class_tokens(self, class_id: int) -> dict:
+        q = self._query("SELECT COALESCE(SUM(tokens_in+tokens_out),0) AS n FROM questions WHERE class_id=?", (class_id,))[0]["n"]
+        d = self._query("SELECT COALESCE(SUM(tokens),0) AS n FROM doubts WHERE class_id=?", (class_id,))[0]["n"]
+        s = self._query("SELECT COALESCE(SUM(tokens),0) AS n FROM summaries WHERE class_id=?", (class_id,))[0]["n"]
+        return {"questions": q, "doubts": d, "summaries": s}
 
     def sentences_between(self, class_id: int, t0: float, t1: float) -> list[dict]:
         return self._query("SELECT id,t_start,speaker,text FROM sentences "
