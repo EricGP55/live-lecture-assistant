@@ -97,6 +97,18 @@
   .field textarea { height: 110px; }
   .row2 { display: flex; gap: 8px; }
   .row2 select { flex: 1; }
+  .row.alert-important { box-shadow: inset 3px 0 0 #f5c542; background: color-mix(in srgb, #f5c542 7%, transparent); }
+  .row.alert-complex { box-shadow: inset 3px 0 0 #c084fc; background: color-mix(in srgb, #c084fc 7%, transparent); }
+  .row .mark { display: block; font-size: 11px; color: var(--muted); margin-top: 3px; }
+  .row .mark b { color: #f5c542; font-weight: 600; } .row.alert-complex .mark b { color: #c084fc; }
+  .fb { background: none; border: 1px solid var(--line); border-radius: 5px; padding: 0 5px; font-size: 11px; margin-left: 4px; cursor: pointer; opacity: .65; }
+  .fb:hover { opacity: 1; } .fb.on { opacity: 1; border-color: var(--accent); background: color-mix(in srgb, var(--accent) 18%, transparent); }
+  .al { border-bottom: 1px solid var(--line); padding: 8px 0; font-size: 13px; }
+  .al .t { cursor: pointer; } .al .why { color: var(--muted); font-size: 12px; }
+  .rule { display: flex; gap: 8px; align-items: flex-start; padding: 6px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
+  .rule input { margin-top: 3px; } .rule .rn { flex: 1; } .rule small { color: var(--muted); display: block; font-size: 11px; }
+  .sub { font-size: 12px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; margin: 16px 0 4px; }
+  .toast.imp { border-left-color: #f5c542; } .toast.cx { border-left-color: #c084fc; }
   .toasts { position: fixed; right: 16px; bottom: 44px; z-index: 9; display: grid; gap: 8px; width: 340px; }
   .toast { background: #1d2230; border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 8px;
            padding: 10px 12px; font-size: 13px; box-shadow: 0 6px 24px #0008; cursor: pointer; }
@@ -118,7 +130,7 @@
   <span class="status" id="status">Connecting…</span>
   <span class="clock" id="clock">00:00</span>
   <span class="level" title="Microphone level"><i id="level"></i></span>
-  <button onclick="window.open('/mini','mini','width=380,height=560')">Mini window</button>
+  <button onclick="openMini()" title="Small window that stays on top of other apps">Mini window</button>
   <button class="stop" onclick="stopClass()">End class</button>
 </header>
 <div class="layout">
@@ -135,6 +147,7 @@
     <div class="tabs">
       <button data-tab="ask" class="on">Ask</button>
       <button data-tab="doubts">Doubts<span class="badge" id="badge" hidden>0</span></button>
+      <button data-tab="alerts">Alerts<span class="badge" id="abadge" hidden>0</span></button>
       <button data-tab="profile">Profile</button>
     </div>
 
@@ -175,6 +188,24 @@
           <button type="submit" id="doubt-btn">Add doubt</button>
         </div>
       </form>
+    </section>
+
+    <section class="pane" id="tab-alerts" hidden>
+      <div class="scroll">
+        <div class="sub">This class</div>
+        <div id="alerts-list"><div class="qa-empty" id="alerts-empty">Important or complex moments will appear here and be
+          marked in the transcript. Use 👍 / 👎 so the alerts learn what matters to you.</div></div>
+        <div class="sub">What to alert me about</div>
+        <div id="rules"></div>
+        <div class="sub">Add my own rule</div>
+        <form id="rule-form" style="border:none;padding:0">
+          <textarea id="rule-desc" style="height:54px" placeholder="e.g. when they talk about the chain rule; when they mention the lab report"></textarea>
+          <div class="form-row">
+            <select id="rule-kind"><option value="important">⭐ Important</option><option value="complex">🧩 Complex</option></select>
+            <button type="submit">Add rule</button>
+          </div>
+        </form>
+      </div>
     </section>
 
     <section class="pane" id="tab-profile" hidden>
@@ -226,6 +257,7 @@ function drawSentence(f) {
   el.querySelector('.t').textContent = fmt(f.t0);
   el.querySelector('.tag').textContent = f.speaker || '?';
   el.querySelector('.txt').textContent = f.text;
+  if (alertBySentence.has(f.id)) markSentence(alertBySentence.get(f.id));
   count();
 }
 function count() {
@@ -290,7 +322,7 @@ $('question').addEventListener('keydown', e => {
 // ---------- tabs
 function showTab(name) {
   document.querySelectorAll('.tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === name));
-  ['ask', 'doubts', 'profile'].forEach(t => $('tab-' + t).hidden = t !== name);
+  ['ask', 'doubts', 'alerts', 'profile'].forEach(t => $('tab-' + t).hidden = t !== name);
 }
 document.querySelectorAll('.tabs button').forEach(b => b.onclick = () => showTab(b.dataset.tab));
 
@@ -359,6 +391,62 @@ function drawSuggestions(ev) {
     : ev.questions.map(q => `<li>${esc(q.q)} <button class="mini-btn" data-copy="${esc(q.q)}">Copy</button><small>${esc(q.why)}</small></li>`).join('');
 }
 
+// ---------- alerts
+const alertsById = new Map(), alertBySentence = new Map();
+let unseenAlerts = 0;
+function fbButtons(a) {
+  return `<button class="fb ${a.feedback === 1 ? 'on' : ''}" data-fb="${a.id}" data-v="1" title="Useful">👍</button>`
+       + `<button class="fb ${a.feedback === -1 ? 'on' : ''}" data-fb="${a.id}" data-v="-1" title="Not useful">👎</button>`;
+}
+function markSentence(a) {
+  const row = document.querySelector(`#list .row[data-id="${a.sentence_id}"]`);
+  if (!row) return;
+  row.classList.remove('alert-important', 'alert-complex');
+  row.classList.add('alert-' + a.kind);
+  row.querySelector('.mark')?.remove();
+  const m = document.createElement('span');
+  m.className = 'mark';
+  m.innerHTML = `<b>${a.kind === 'important' ? '⭐' : '🧩'} ${esc(a.reason)}</b> ${fbButtons(a)}`;
+  row.querySelector('.txt').appendChild(m);
+}
+function drawAlert(a, fresh) {
+  alertsById.set(a.id, a); alertBySentence.set(a.sentence_id, a);
+  $('alerts-empty')?.remove();
+  let el = document.querySelector(`.al[data-aid="${a.id}"]`);
+  if (!el) { el = document.createElement('div'); el.className = 'al'; el.dataset.aid = a.id; $('alerts-list').prepend(el); }
+  el.innerHTML = `<span class="t" data-sec="${a.t}">${fmt(a.t)}</span> ${a.kind === 'important' ? '⭐' : '🧩'} <b>${esc(a.reason)}</b> ${fbButtons(a)}`
+    + `<div class="why">${esc(a.text.slice(0, 140))}</div>`;
+  markSentence(a);
+  if (fresh) {
+    if ($('tab-alerts').hidden) { unseenAlerts++; $('abadge').textContent = unseenAlerts; $('abadge').hidden = false; }
+    toast((a.kind === 'important' ? '⭐ ' : '🧩 ') + a.reason, a.text.slice(0, 160), a.kind === 'important' ? 'imp' : 'cx', () => jumpTo(a.t));
+  }
+}
+function drawRules(rules) {
+  const row = r => `<label class="rule"><input type="checkbox" data-rule="${r.key}" ${r.enabled ? 'checked' : ''}>
+    <span class="rn">${r.kind === 'important' ? '⭐' : '🧩'} ${esc(r.name)}<small>${esc(r.description)} · learned ${r.learned}</small></span>
+    ${r.builtin ? '' : `<button class="mini-btn" data-delrule="${r.key}" type="button">Delete</button>`}</label>`;
+  $('rules').innerHTML = rules.map(row).join('');
+}
+document.addEventListener('click', e => {
+  const f = e.target.closest('[data-fb]');
+  if (f) { e.stopPropagation(); ws.send(JSON.stringify({ type: 'alert_feedback', id: +f.dataset.fb, value: +f.dataset.v })); }
+  const del = e.target.closest('[data-delrule]');
+  if (del && confirm('Delete this rule?')) ws.send(JSON.stringify({ type: 'rule_delete', key: del.dataset.delrule }));
+  const t = e.target.closest('.al .t'); if (t) jumpTo(+t.dataset.sec);
+});
+document.addEventListener('change', e => {
+  const c = e.target.closest('[data-rule]');
+  if (c) ws.send(JSON.stringify({ type: 'rule_toggle', key: c.dataset.rule, enabled: c.checked }));
+});
+$('rule-form').addEventListener('submit', e => {
+  e.preventDefault();
+  const d = $('rule-desc').value.trim(); if (!d) return;
+  ws.send(JSON.stringify({ type: 'rule_add', description: d, name: d.slice(0, 40), kind: $('rule-kind').value }));
+  $('rule-desc').value = '';
+});
+document.querySelector('[data-tab="alerts"]').addEventListener('click', () => { unseenAlerts = 0; $('abadge').hidden = true; });
+
 // ---------- profile
 $('profile-form').addEventListener('submit', e => {
   e.preventDefault();
@@ -384,7 +472,8 @@ function connect() {
       case 'sentence': follow(() => drawSentence(ev)); if (ev.proc_ms != null) $('m-proc').textContent = `processing: ${ev.proc_ms} ms`; break;
       case 'speaker': {
         const el = document.querySelector(`[data-id="${ev.id}"]`);
-        if (el) { el.className = 'row ' + cls(ev.speaker); el.querySelector('.tag').textContent = ev.speaker; el.title = 'P(teacher) = ' + ev.p; count(); }
+        if (el) { el.className = 'row ' + cls(ev.speaker); el.querySelector('.tag').textContent = ev.speaker; el.title = 'P(teacher) = ' + ev.p;
+                  if (alertBySentence.has(ev.id)) markSentence(alertBySentence.get(ev.id)); count(); }
         break; }
       case 'partial':
         follow(() => {
@@ -403,6 +492,8 @@ function connect() {
         else if (prev?.checking && !ev.checking && ev.status === 'answered')
           toast('Already answered in class', ev.answer, 'ok', () => showTab('doubts'));
         break; }
+      case 'alert': drawAlert(ev, !alertsById.has(ev.id) && live); break;
+      case 'alert_rules': drawRules(ev.rules); break;
       case 'moment': toast('Good moment to ask', ev.text, 'warn', () => showTab('doubts')); break;
       case 'suggestions': drawSuggestions(ev); break;
       case 'profile':
@@ -431,6 +522,10 @@ function connect() {
     if (current) { current.a.classList.remove('thinking'); current = null; $('send').disabled = false; }
     setTimeout(connect, 1500);
   };
+}
+async function openMini() {
+  try { const r = await (await fetch('/api/mini', { method: 'POST' })).json(); if (r.ok) return; } catch (e) {}
+  window.open('/mini', 'mini', 'width=380,height=560');  // fallback: normal browser window
 }
 async function stopClass() {
   if (!confirm('End the class? Everything will be saved, including the teacher voiceprint.')) return;

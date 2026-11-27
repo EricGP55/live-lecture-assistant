@@ -5,15 +5,43 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Class · mini</title>
 <style>
-  :root { --bg:#0b0d11; --line:#1f242d; --text:#d9dce2; --muted:#7b8394; --teacher:#5b9dff; --student:#f0a04b; --accent:#8b7cf6; }
+  :root { --bg:#0b0d11; --line:#1f242d; --text:#d9dce2; --muted:#7b8394; --teacher:#5b9dff; --student:#f0a04b; --accent:#8b7cf6;
+          --imp:#f5c542; --cx:#c084fc; --ok:#3ecf8e; }
   [hidden] { display:none !important; }
   html, body { height:100%; }
   body { margin:0; background:var(--bg); color:var(--text); font:13px/1.45 -apple-system, sans-serif;
-         display:flex; flex-direction:column; }
-  .top { display:flex; align-items:center; gap:8px; padding:8px 12px; border-bottom:1px solid var(--line); color:var(--muted); font-size:12px; }
-  .rec { width:7px; height:7px; border-radius:50%; background:#444; }
+         display:flex; flex-direction:column; overflow:hidden; }
+
+  /* the one-line bar: always visible; the whole window when collapsed */
+  .bar { display:flex; align-items:center; gap:8px; height:34px; flex:none; padding:0 6px 0 12px; box-sizing:border-box;
+         border-bottom:1px solid var(--line); color:var(--muted); font-size:12px; cursor:default; user-select:none;
+         transition:background .4s; }
+  body.collapsed .bar { border-bottom:none; }
+  .bar.flash-imp { background:color-mix(in srgb, var(--imp) 22%, var(--bg)); }
+  .bar.flash-cx { background:color-mix(in srgb, var(--cx) 22%, var(--bg)); }
+  .bar.flash-ok { background:color-mix(in srgb, var(--ok) 20%, var(--bg)); }
+  .rec { width:7px; height:7px; border-radius:50%; background:#444; flex:none; }
   .rec.on { background:#ef4444; }
+  #subject { color:var(--text); font-weight:600; flex:none; max-width:90px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #ticker { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .counts { flex:none; display:flex; gap:6px; font-size:11px; }
+  .counts span[data-n="0"] { display:none; }
+  .icon { flex:none; background:none; border:none; color:var(--muted); font-size:13px; width:22px; height:22px; border-radius:5px;
+          cursor:pointer; display:grid; place-items:center; padding:0; }
+  .icon:hover { background:#1a1f29; color:var(--text); }
+  #toggle { transition:transform .15s; }
+  body.collapsed #toggle { transform:rotate(-90deg); }
+
+  #body { flex:1; display:flex; flex-direction:column; min-height:0; }
+  body.collapsed #body { display:none; }
   #alerts { padding:8px 12px; border-bottom:1px solid var(--line); color:var(--muted); font-size:12px; }
+  #alerts.on { color:var(--text); background:#1b2030; border-left:3px solid var(--imp); }
+  #alerts.ok { border-left-color:var(--ok); } #alerts.imp { border-left-color:var(--imp); } #alerts.cx { border-left-color:var(--cx); }
+  #alog { padding:0 12px; }
+  .alx { display:flex; gap:6px; align-items:center; font-size:12px; padding:4px 0; border-bottom:1px solid var(--line); }
+  .alx span { flex:1; color:var(--muted); }
+  .alx button { background:none; border:1px solid var(--line); border-radius:4px; font-size:11px; padding:0 4px; cursor:pointer; opacity:.6; }
+  .alx button.on { opacity:1; border-color:var(--accent); }
   #list { padding:6px 12px; flex:1; overflow-y:auto; }
   .f { padding:5px 0; border-bottom:1px solid var(--line); }
   .f b { font-size:10px; margin-right:6px; }
@@ -31,21 +59,67 @@
   .modes { display:flex; gap:4px; margin-bottom:6px; }
   .modes button { background:#151920; color:var(--muted); border:1px solid var(--line); border-radius:5px; font:inherit; font-size:11px; padding:2px 10px; cursor:pointer; }
   .modes button.on { color:var(--text); border-color:var(--accent); }
-  #alerts.on { color:var(--text); background:#1b2030; border-left:3px solid #f5c542; }
-  #alerts.ok { border-left-color:#3ecf8e; }
 </style>
 </head>
 <body>
-<div class="top"><span class="rec" id="rec"></span><span id="subject">Class</span></div>
-<div id="alerts">No alerts.</div>
-<div id="list"></div>
-<div id="answer" hidden><div class="q" id="aq"></div><div class="a" id="aa"></div></div>
-<form class="box" id="ask"><div class="modes"><button type="button" data-mode="ask" class="on">Ask</button><button type="button" data-mode="doubt">Doubt</button></div><input id="question" placeholder="Ask about the class… (Enter)" autocomplete="off"></form>
+<!-- pywebview-drag-region: in the native window, drag the bar to move it -->
+<div class="bar pywebview-drag-region" id="bar" title="Double-click to collapse / expand">
+  <span class="rec" id="rec"></span>
+  <span id="subject">Class</span>
+  <span id="ticker">Waiting…</span>
+  <span class="counts"><span id="c-imp" data-n="0" title="Important alerts">⭐0</span><span id="c-cx" data-n="0" title="Complex alerts">🧩0</span><span id="c-dbt" data-n="0" title="Open doubts">❓0</span></span>
+  <button class="icon" id="toggle" title="Collapse / expand">▾</button>
+  <button class="icon" id="close" title="Close the mini window" hidden>✕</button>
+</div>
+<div id="body">
+  <div id="alerts">No alerts.</div>
+  <div id="alog"></div>
+  <div id="list"></div>
+  <div id="answer" hidden><div class="q" id="aq"></div><div class="a" id="aa"></div></div>
+  <form class="box" id="ask"><div class="modes"><button type="button" data-mode="ask" class="on">Ask</button><button type="button" data-mode="doubt">Doubt</button></div><input id="question" placeholder="Ask about the class… (Enter)" autocomplete="off"></form>
+</div>
 <script>
 const $ = id => document.getElementById(id);
 const cls = sp => sp === 'T' ? 'T' : sp === 'S' ? 'S' : 'X';
 const esc = t => String(t ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
 const latest = new Map(); let partial = '', ws = null, busy = false, answer = '';
+
+// ---------- collapse to one line (persists; resizes the native window when running in pywebview)
+const native = () => window.pywebview && window.pywebview.api;
+function setCollapsed(c) {
+  document.body.classList.toggle('collapsed', c);
+  localStorage.setItem('mini-collapsed', c ? '1' : '');
+  if (native()) window.pywebview.api.set_collapsed(c);
+}
+$('toggle').onclick = () => setCollapsed(!document.body.classList.contains('collapsed'));
+$('bar').addEventListener('dblclick', e => { if (!e.target.closest('button')) $('toggle').click(); });
+$('close').onclick = () => native() ? window.pywebview.api.close() : window.close();
+window.addEventListener('pywebviewready', () => {
+  $('close').hidden = false;
+  window.pywebview.api.set_collapsed(document.body.classList.contains('collapsed'));
+});
+document.body.classList.toggle('collapsed', !!localStorage.getItem('mini-collapsed'));
+
+// ---------- the one-line ticker: latest alert / doubt news, otherwise what is being said
+let tickerHold = 0;
+function ticker(text, flash = '') {
+  $('ticker').textContent = text;
+  if (flash) {
+    tickerHold = Date.now() + 15000;                      // keep important news visible for 15 s
+    $('bar').classList.remove('flash-imp', 'flash-cx', 'flash-ok'); void $('bar').offsetWidth;
+    $('bar').classList.add('flash-' + flash);
+    setTimeout(() => $('bar').classList.remove('flash-' + flash), 2500);
+  }
+}
+function tickSpeech(text) { if (Date.now() > tickerHold && text) ticker(text); }
+function counts() {
+  const a = [...alertsSeen.values()];
+  const set = (id, icon, n) => { $(id).textContent = icon + n; $(id).dataset.n = n; };
+  set('c-imp', '⭐', a.filter(x => x.kind === 'important').length);
+  set('c-cx', '🧩', a.filter(x => x.kind === 'complex').length);
+  set('c-dbt', '❓', [...doubts.values()].filter(d => d.status === 'pending' || d.status === 'partial').length);
+}
+
 function draw() {
   const items = [...latest.values()].slice(-6);
   $('list').innerHTML = items.map(f => `<div class="f ${cls(f.speaker)}"><b>${f.speaker || '?'}</b>${esc(f.text)}</div>`).join('')
@@ -62,6 +136,7 @@ document.querySelectorAll('[data-mode]').forEach(b => b.onclick = () => {
 function alertBox(text, kind = '') {
   $('alerts').textContent = text; $('alerts').className = 'on ' + kind;
   clearTimeout(alertBox.t); alertBox.t = setTimeout(() => { $('alerts').className = ''; }, 20000);
+  ticker(text, kind === 'cx' ? 'cx' : kind === 'ok' ? 'ok' : 'imp');
 }
 $('ask').addEventListener('submit', e => {
   e.preventDefault();
@@ -74,26 +149,46 @@ $('ask').addEventListener('submit', e => {
   ws.send(JSON.stringify({ type: 'ask', question: q, scope: 'class' }));
   $('question').value = '';
 });
+const alertsSeen = new Map(), doubts = new Map(), pageStart = Date.now() / 1000;
+function drawAlog() {
+  $('alog').innerHTML = [...alertsSeen.values()].slice(-3).reverse().map(a =>
+    `<div class="alx">${a.kind === 'important' ? '⭐' : '🧩'}<span>${esc(a.reason)}</span>`
+    + `<button data-fb="${a.id}" data-v="1" class="${a.feedback === 1 ? 'on' : ''}">👍</button>`
+    + `<button data-fb="${a.id}" data-v="-1" class="${a.feedback === -1 ? 'on' : ''}">👎</button></div>`).join('');
+  counts();
+}
+document.addEventListener('click', e => {
+  const f = e.target.closest('[data-fb]');
+  if (f && ws) ws.send(JSON.stringify({ type: 'alert_feedback', id: +f.dataset.fb, value: +f.dataset.v }));
+});
 function connect() {
   ws = new WebSocket(`ws://${location.host}/ws`);
   ws.onmessage = e => {
     const ev = JSON.parse(e.data);
-    if (ev.type === 'sentence') { latest.set(ev.id, ev); if (latest.size > 20) latest.delete(latest.keys().next().value); draw(); }
+    if (ev.type === 'sentence') { latest.set(ev.id, ev); if (latest.size > 20) latest.delete(latest.keys().next().value); draw(); tickSpeech(ev.text); }
     else if (ev.type === 'speaker' && latest.has(ev.id)) { latest.get(ev.id).speaker = ev.speaker; draw(); }
-    else if (ev.type === 'partial') { partial = ev.text || ''; draw(); }
+    else if (ev.type === 'partial') { partial = ev.text || ''; draw(); tickSpeech(partial); }
     else if (ev.type === 'class') $('subject').textContent = ev.subject;
-    else if (ev.type === 'status') $('rec').classList.toggle('on', ev.text.startsWith('Listening'));
+    else if (ev.type === 'status') { $('rec').classList.toggle('on', ev.text.startsWith('Listening')); if (!latest.size) ticker(ev.text); }
     else if (ev.type === 'moment') alertBox('💬 ' + ev.text);
-    else if (ev.type === 'doubt' && ev.hit) alertBox((ev.status === 'answered' ? '🟢 Answered: ' : '🟡 Partly answered: ') + ev.text, ev.status === 'answered' ? 'ok' : '');
-    else if (ev.type === 'doubt' && !ev.checking && ev.status !== 'dismissed' && $('alerts').textContent.startsWith('Doubt saved'))
-      alertBox(({ answered: '🟢 Already answered: ', partial: '🟡 Partly answered: ', pending: '🔴 Not answered yet, watching: ' })[ev.status] + ev.text, ev.status === 'answered' ? 'ok' : '');
+    else if (ev.type === 'alert') {
+      const fresh = !alertsSeen.has(ev.id); alertsSeen.set(ev.id, ev); drawAlog();
+      if (fresh && ev.feedback === 0 && Date.now() / 1000 - pageStart > 3)
+        alertBox((ev.kind === 'important' ? '⭐ ' : '🧩 ') + ev.reason + ' — ' + ev.text.slice(0, 90), ev.kind === 'important' ? 'imp' : 'cx');
+    }
+    else if (ev.type === 'doubt') {
+      doubts.set(ev.id, ev); counts();
+      if (ev.hit) alertBox((ev.status === 'answered' ? '🟢 Answered: ' : '🟡 Partly answered: ') + ev.text, ev.status === 'answered' ? 'ok' : '');
+      else if (!ev.checking && ev.status !== 'dismissed' && $('alerts').textContent.startsWith('Doubt saved'))
+        alertBox(({ answered: '🟢 Already answered: ', partial: '🟡 Partly answered: ', pending: '🔴 Not answered yet, watching: ' })[ev.status] + ev.text, ev.status === 'answered' ? 'ok' : '');
+    }
     else if (ev.type === 'answer_delta' && busy) { answer += ev.text; $('aa').innerHTML = esc(answer).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>'); }
     else if (ev.type === 'answer_done' && busy) {
       busy = false; $('aa').classList.remove('thinking');
       if (ev.error) $('aa').innerHTML += `<span class="err">\n⚠ ${esc(ev.error)}</span>`;
     }
   };
-  ws.onclose = () => { busy = false; setTimeout(connect, 1500); };
+  ws.onclose = () => { busy = false; ticker('Disconnected. Retrying…'); setTimeout(connect, 1500); };
 }
 connect();
 </script>

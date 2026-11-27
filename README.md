@@ -1,8 +1,8 @@
 # Live Class Assistant
 
-Records a class, transcribes it live, tells apart the **teacher (T)** from the **students (S)**, and lets you **ask questions about what was said** and **keep track of your doubts** while the class is going on. Audio and transcription stay on the Mac; only short transcript excerpts are sent to Claude when you ask something.
+Records a class, transcribes it live, tells apart the **teacher (T)** from the **students (S)**, and lets you **ask questions about what was said** , **keep track of your doubts** and **get alerted when something important or complex happens** while the class is going on. Audio and transcription stay on the Mac; only short transcript excerpts are sent to Claude when you ask something.
 
-**Status:** phases 1–3 done (live transcription, speakers, history, audio, questions to the AI, doubts mode). Next: phase 4 (alerts with your own rules).
+**Status:** phases 1–4 done (live transcription, speakers, history, audio, questions to the AI, doubts mode, alerts). Next: phase 5 (notes after class and polish).
 
 ## Setup (once)
 
@@ -28,7 +28,13 @@ On first run, the Parakeet v3 model (~1.2 GB) is downloaded to `~/.cache/hugging
 .venv/bin/python main.py --subject "Calculus"
 ```
 
-- Opens `http://127.0.0.1:8765/` (full page) and `/mini` (small window).
+- Opens `http://127.0.0.1:8765/` (full page). The **Mini window** button opens a small native window that stays on top of other apps; add `--mini` to open it at start.
+- **Mini window controls:**
+  - **Collapse to one line:** ▾ or double-click the bar. The line keeps showing what matters: recording dot, subject, the latest alert or what is being said, and counters ⭐ alerts · 🧩 complex · ❓ open doubts. It flashes when something new arrives.
+  - **Expand:** the same again; it goes back to its previous size.
+  - **Move it:** drag the bar.
+  - **Close it:** ✕.
+  - It remembers whether it was collapsed.
 - **Ctrl+C** or the "End class" button closes the class. The text, the audio and the teacher's voiceprint are saved.
 - On first run, macOS asks for **microphone permission** for the Terminal.
 
@@ -60,6 +66,29 @@ Open the **Doubts** tab, or switch the mini window to *Doubt*, and write what yo
 - **Profile tab:** what worries you in this subject, plus whether the questions should use *tú* or *usted* and be short or linked to what was said. It is saved per subject.
 - **Carried over:** unresolved doubts appear again in the next class of the same subject.
 
+### Alerts
+
+When something important (⭐) or complex (🧩) happens:
+- the sentence is marked in the transcript;
+- a silent macOS notification appears;
+- the alert shows up in the mini window and in the **Alerts** tab.
+
+Give each alert a **👍 or 👎**. A 👎 makes that rule stricter and silences very similar sentences in the future; a 👍 does the opposite.
+
+| Rule | Fires when | How |
+|---|---|---|
+| ⭐ Exam & grading | "esto entra en el examen", "lo voy a preguntar", "suele salir al final"… | text rule, or similar wording confirmed by Claude |
+| ⭐ Teacher's emphasis | "importante", "fijaos bien", "apuntad"… | text rule / similar wording |
+| ⭐ Homework & logistics | "para el jueves haced…", deadlines, room changes | text rule / similar wording |
+| ⭐ Key definitions | "formalmente", "se define", "teorema"… | text rule / similar wording |
+| ⭐ Repeated idea | the same idea said for the 3rd time | local embeddings |
+| 🧩 Many new terms | a burst of new technical words | local word count |
+| 🧩 Formulas & steps | a derivation or formula being explained | local count of operators and variables |
+| 🧩 Touches your concerns | close to what you wrote in the Profile tab | local embeddings |
+| your own rules | e.g. "when they talk about the chain rule" | similar wording, confirmed by Claude |
+
+Rules can be switched on and off in the Alerts tab, where you can also add your own.
+
 ## How it works
 
 1. **Audio:** microphone or file at 16 kHz mono, also saved as Opus (~11 MB per hour).
@@ -78,6 +107,9 @@ Open the **Doubts** tab, or switch the mini window to *Doubt*, and write what yo
    - **Watching:** each new teacher sentence is compared with every open doubt using the same local embeddings. On the sample class, sentences that really address a doubt score ≥ 0.89 and the rest ≤ 0.85.
    - **Confirming:** only strong or unusual matches are confirmed with a short Claude call, so a doubt the class never covers costs nothing after the first check.
    - **Thresholds:** they are in `config.yaml` under `doubts:`.
+8. **Alerts (phase 4):**
+   - **Local first:** most alerts come from text rules, local embeddings and word counts, at 0 tokens. Claude is only asked about similar-wording candidates without a clear text rule, and about your own rules, in a single short call.
+   - **Learning:** feedback is stored as examples (`alert_examples`) and per-rule thresholds (`alert_rules`).
 
 ## Data
 
@@ -86,7 +118,7 @@ Open the **Doubts** tab, or switch the mini window to *Doubt*, and write what yo
 | `data/class.db` | SQLite: subjects, classes, sentences (with FTS5 search) and the teacher voiceprint per subject |
 | `data/audio/*.opus` | Audio of each class |
 
-Questions and answers are stored in the `questions` table of `data/class.db`, together with the sentences used as context and the tokens spent. Doubts, with their status, evidence, suggested questions and tokens, are in the `doubts` table.
+Questions and answers are stored in the `questions` table of `data/class.db`, together with the sentences used as context and the tokens spent. Doubts, with their status, evidence, suggested questions and tokens, are in the `doubts` table. Alerts and your feedback are in `alerts`, `alert_rules` and `alert_examples`.
 
 ## Private files and the commit guard
 
@@ -107,6 +139,7 @@ tests/make_test_audio.sh                    # builds a sample class with two sys
 .venv/bin/python tests/test_pipeline.py     # runs it through the pipeline, without the web page
 .venv/bin/python tests/test_qa.py           # transcribes it and asks 4 questions through your subscription
 .venv/bin/python tests/test_doubts.py       # replays it live with 3 doubts: check, watch, suggest
+.venv/bin/python tests/test_alerts.py       # alert rules, a custom rule confirmed by Claude, and 👎 learning
 ```
 
 ## Measured performance (MacBook Air M1, 8 GB)
@@ -117,3 +150,5 @@ tests/make_test_audio.sh                    # builds a sample class with two sys
 - **RAM:** ~1.4 GB while running (2.5 GB peak while loading the model).
 - **Question → first words:** ~0.5–1.4 s. Each question costs ~1,300–1,500 input + 50–200 output tokens.
 - **Doubts:** the first check costs ~1,400–2,300 tokens. Each confirmation while watching costs ~500–1,000, and only happens on a clear match.
+- **Alerts:** on the sample class, 0 tokens: every alert came from local rules. Only your own rules and borderline wording use Claude, at a few hundred tokens each.
+- **Mini window (native):** ~52 MB of RAM.

@@ -61,15 +61,16 @@ def create_app(hub: Hub, pipeline_factory, services_factory=None):
 
     async def on_event(ev):
         p, doubts = state["pipeline"], state["svc"].get("doubts")
+        alerts = state["svc"].get("alerts")
         if not doubts or not p or p.class_id is None:
             return
         try:
             if ev["type"] == "sentence":
-                await doubts.on_sentence(ev, p)
+                await asyncio.gather(doubts.on_sentence(ev, p), alerts.on_sentence(ev, p))
             elif ev["type"] == "pause":
                 await doubts.on_pause(ev, p)
-        except Exception as e:  # watching doubts must never break the class
-            print("doubts watcher error:", e)
+        except Exception as e:  # watchers must never break the class
+            print("watcher error:", e)
 
     @asynccontextmanager
     async def lifespan(app):
@@ -99,6 +100,18 @@ def create_app(hub: Hub, pipeline_factory, services_factory=None):
     @app.get("/mini")
     async def mini():
         return FileResponse(WEB / "mini.html")
+
+    @app.post("/api/mini")
+    async def open_mini():
+        """Opens the mini page in a small always-on-top native window (pywebview)."""
+        import subprocess
+        import sys
+        url = f"http://{app.state.host}:{app.state.port}/mini"
+        try:
+            subprocess.Popen([sys.executable, str(ROOT / "mini_window.py"), url])
+            return {"ok": True}
+        except OSError as e:
+            return {"ok": False, "error": str(e)}
 
     @app.post("/api/stop")
     async def stop():
@@ -139,6 +152,19 @@ def create_app(hub: Hub, pipeline_factory, services_factory=None):
         elif kind == "suggest":
             qs, err = await doubts.suggest(p)
             await hub.send(sock, {"type": "suggestions", "questions": qs, "error": err})
+        elif kind == "alert_feedback":
+            await state["svc"]["alerts"].feedback(int(msg["id"]), int(msg["value"]))
+        elif kind in ("rule_toggle", "rule_add", "rule_delete"):
+            alerts = state["svc"]["alerts"]
+            if kind == "rule_toggle":
+                await asyncio.to_thread(p.store.update_rule, msg["key"], enabled=int(bool(msg.get("enabled"))))
+            elif kind == "rule_add" and msg.get("description", "").strip():
+                await asyncio.to_thread(alerts.add_rule, msg.get("name") or msg["description"][:40],
+                                        msg["description"].strip(), msg.get("kind", "important"))
+            elif kind == "rule_delete":
+                await asyncio.to_thread(p.store.delete_rule, msg["key"])
+            await asyncio.to_thread(alerts.reload)
+            await hub.send_all({"type": "alert_rules", "rules": alerts.rules_view()})
         elif kind == "profile_set":
             style = {"address": msg.get("address", "informal"), "length": msg.get("length", "short")}
             await asyncio.to_thread(p.store.set_profile, p.subject["id"], msg.get("concerns", "")[:1500], style)
@@ -169,6 +195,10 @@ def create_app(hub: Hub, pipeline_factory, services_factory=None):
             if state["svc"]:
                 for d in await asyncio.to_thread(state["svc"]["doubts"].views, p):
                     await hub.send(sock, {"type": "doubt", **d})
+                alerts = state["svc"]["alerts"]
+                await hub.send(sock, {"type": "alert_rules", "rules": alerts.rules_view()})
+                for a in await asyncio.to_thread(p.store.alerts, p.class_id):
+                    await hub.send(sock, alerts.view(a))
             await hub.send(sock, {"type": "profile", **p.store.profile(p.subject["id"])})
         try:
             while True:

@@ -33,6 +33,17 @@ doubts:
   confirm_cooldown_s: 30   # min time between confirmations of the same doubt (skipped for strong matches)
   pause_moment_s: 4        # silence after the teacher that counts as a "good moment to ask"
 
+alerts:
+  enabled: true
+  rule_cooldown_s: 20      # the same rule will not alert twice within this time
+  negative_match: 0.93     # a sentence this similar to one you 👎'd is silenced for that rule
+  semantic_min_words: 6    # shorter sentences only use text rules (very short ones look similar to everything)
+  new_terms_warmup_s: 90   # ignore "new terms" during the first minute and a half (everything is new)
+  # Per-rule thresholds live in the database and change with your 👍/👎 (see the Alerts tab).
+
+ui:
+  open_mini: false         # open the always-on-top mini window when the class starts (or use --mini)
+
 notifications:
   enabled: true            # silent macOS banners (doubt answered, good moment to ask)
 

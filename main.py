@@ -9,11 +9,14 @@ Usage:
 """
 import argparse
 import subprocess
+import sys
 import threading
+from pathlib import Path
 
 import uvicorn
 
 from app.audio import list_devices
+from app.alerts import Alerts
 from app.config import load
 from app.doubts import Doubts
 from app.embeddings import Embedder
@@ -33,6 +36,7 @@ def main():
     ap.add_argument("--file", help="use an audio file instead of the microphone (testing)")
     ap.add_argument("--fast", action="store_true", help="with --file: process without waiting for real time")
     ap.add_argument("--no-browser", action="store_true", help="do not open the page automatically")
+    ap.add_argument("--mini", action="store_true", help="also open the always-on-top mini window")
     a = ap.parse_args()
 
     if a.devices:
@@ -54,7 +58,8 @@ def main():
         llm = SubscriptionLLM(model=llm_cfg.get("answer_model", "sonnet"), effort=llm_cfg.get("effort", "low"))
         retriever = Retriever(store, embedder)
         return {"llm": llm, "qa": QA(cfg, retriever, llm),
-                "doubts": Doubts(cfg, store, retriever, embedder, llm, send_all)}
+                "doubts": Doubts(cfg, store, retriever, embedder, llm, send_all),
+                "alerts": Alerts(cfg, store, embedder, llm, send_all)}
 
     app = create_app(
         hub,
@@ -62,10 +67,14 @@ def main():
                          embedder=embedder),
         services)
     host, port = cfg["server"]["host"], cfg["server"]["port"]
+    app.state.host, app.state.port = host, port
     url = f"http://{host}:{port}/"
     print(f"Opening {url}  (mini: {url}mini) · Ctrl+C to end the class")
     if not a.no_browser:
         threading.Timer(1.5, lambda: subprocess.run(["open", url])).start()
+    if a.mini or cfg.get("ui", {}).get("open_mini", False):
+        threading.Timer(2.0, lambda: subprocess.Popen(
+            [sys.executable, str(Path(__file__).parent / "mini_window.py"), url + "mini"])).start()
     uvicorn.run(app, host=host, port=port, log_level="warning")
 
 

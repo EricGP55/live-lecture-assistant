@@ -73,6 +73,38 @@ CREATE TABLE IF NOT EXISTS doubts (
     tokens INTEGER DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS doubts_subject ON doubts(subject_id, status);
+CREATE TABLE IF NOT EXISTS alert_rules (
+    id INTEGER PRIMARY KEY,
+    key TEXT UNIQUE NOT NULL,          -- 'exam', 'emphasis', ... or 'custom_<n>'
+    kind TEXT NOT NULL,                -- 'important' | 'complex'
+    name TEXT NOT NULL,
+    description TEXT NOT NULL,         -- also used as the semantic query for custom rules
+    enabled INTEGER NOT NULL DEFAULT 1,
+    threshold REAL NOT NULL,           -- adjusted by 👍/👎
+    builtin INTEGER NOT NULL DEFAULT 0,
+    embedding BLOB
+);
+CREATE TABLE IF NOT EXISTS alert_examples (
+    id INTEGER PRIMARY KEY,
+    rule_key TEXT NOT NULL,
+    polarity INTEGER NOT NULL,         -- +1 useful alert, -1 useless alert
+    text TEXT NOT NULL,
+    embedding BLOB NOT NULL,
+    created_at REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS alerts (
+    id INTEGER PRIMARY KEY,
+    class_id INTEGER NOT NULL REFERENCES classes(id),
+    sentence_id INTEGER REFERENCES sentences(id),
+    t REAL NOT NULL,
+    kind TEXT NOT NULL,                -- 'important' | 'complex'
+    rules TEXT NOT NULL,               -- JSON list of rule keys that fired
+    reason TEXT NOT NULL,
+    source TEXT NOT NULL,              -- 'rule' | 'semantic+claude' | 'repeat' | 'local'
+    feedback INTEGER NOT NULL DEFAULT 0,
+    created_at REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS alerts_class ON alerts(class_id, t);
 """
 
 DOUBT_FIELDS = ("status", "answer", "evidence", "missing", "questions", "answered_class_id",
@@ -219,6 +251,53 @@ class Store:
         return self._query(
             "SELECT * FROM doubts WHERE subject_id=? AND (class_id=? OR status IN ('pending','partial')) "
             "ORDER BY id", (subject_id, class_id))
+
+    # --- alerts
+    def alert_rules(self) -> list[dict]:
+        return self._query("SELECT * FROM alert_rules ORDER BY builtin DESC, id")
+
+    def upsert_rule(self, key, kind, name, description, threshold, builtin, embedding=None):
+        self._exec(
+            "INSERT INTO alert_rules(key,kind,name,description,threshold,builtin,embedding) VALUES (?,?,?,?,?,?,?) "
+            "ON CONFLICT(key) DO UPDATE SET kind=excluded.kind, name=excluded.name, description=excluded.description, "
+            "embedding=COALESCE(excluded.embedding, alert_rules.embedding)",
+            (key, kind, name, description, threshold, int(builtin),
+             embedding.astype(np.float32).tobytes() if embedding is not None else None))
+
+    def update_rule(self, key, **fields):
+        cols = [k for k in fields if k in ("enabled", "threshold")]
+        if cols:
+            self._exec(f"UPDATE alert_rules SET {', '.join(c + '=?' for c in cols)} WHERE key=?",
+                       (*[fields[c] for c in cols], key))
+
+    def delete_rule(self, key):
+        self._exec("DELETE FROM alert_rules WHERE key=? AND builtin=0", (key,))
+        self._exec("DELETE FROM alert_examples WHERE rule_key=?", (key,))
+
+    def add_example(self, rule_key, polarity, text, embedding):
+        self._exec("INSERT INTO alert_examples(rule_key,polarity,text,embedding,created_at) VALUES (?,?,?,?,?)",
+                   (rule_key, polarity, text, embedding.astype(np.float32).tobytes(), time.time()))
+
+    def examples(self) -> list[dict]:
+        return self._query("SELECT rule_key, polarity, text, embedding FROM alert_examples ORDER BY id")
+
+    def new_alert(self, class_id, sentence_id, t, kind, rules, reason, source) -> int:
+        import json
+        return self._exec(
+            "INSERT INTO alerts(class_id,sentence_id,t,kind,rules,reason,source,created_at) VALUES (?,?,?,?,?,?,?,?)",
+            (class_id, sentence_id, t, kind, json.dumps(rules), reason, source, time.time())).lastrowid
+
+    def alert(self, alert_id: int) -> dict | None:
+        r = self._query("SELECT a.*, s.text FROM alerts a LEFT JOIN sentences s ON s.id=a.sentence_id WHERE a.id=?",
+                        (alert_id,))
+        return r[0] if r else None
+
+    def set_feedback(self, alert_id: int, value: int):
+        self._exec("UPDATE alerts SET feedback=? WHERE id=?", (value, alert_id))
+
+    def alerts(self, class_id: int) -> list[dict]:
+        return self._query("SELECT a.*, s.text FROM alerts a LEFT JOIN sentences s ON s.id=a.sentence_id "
+                           "WHERE a.class_id=? ORDER BY a.t", (class_id,))
 
     def sentences_between(self, class_id: int, t0: float, t1: float) -> list[dict]:
         return self._query("SELECT id,t_start,speaker,text FROM sentences "
